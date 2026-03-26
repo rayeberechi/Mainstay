@@ -147,7 +147,13 @@ impl Lifecycle {
     }
 
     pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
-        Self::get_collateral_score(env, asset_id) >= 50
+        let threshold = env
+            .storage()
+            .instance()
+            .get(&CONFIG)
+            .map(|c: Config| c.collateral_threshold)
+            .unwrap_or(50);
+        Self::get_collateral_score(env, asset_id) >= threshold
     }
 }
 
@@ -206,6 +212,9 @@ mod tests {
         let engineer = Address::generate(&env);
         let (client, eng_client) = setup(&env);
 
+    #[test]
+    fn test_submit_and_score() {
+        let (env, _, client) = setup();
         let engineer = Address::generate(&env);
         let issuer = Address::generate(&env);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
