@@ -1,5 +1,11 @@
 #![no_std]
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Env, String, Symbol};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, panic_with_error, symbol_short, Env, String, Symbol};
+
+#[contracterror]
+#[derive(Copy, Clone, Debug, PartialEq)]
+pub enum ContractError {
+    AssetNotFound = 1,
+}
 
 #[contracttype]
 #[derive(Clone)]
@@ -46,7 +52,7 @@ impl AssetRegistry {
         env.storage()
             .persistent()
             .get(&asset_key(asset_id))
-            .expect("asset not found")
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::AssetNotFound))
     }
 
     pub fn asset_count(env: Env) -> u64 {
@@ -77,5 +83,19 @@ mod tests {
         let asset = client.get_asset(&id);
         assert_eq!(asset.asset_id, 1);
         assert_eq!(asset.owner, owner);
+    }
+
+    #[test]
+    fn test_get_asset_not_found() {
+        let env = Env::default();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+        let result = client.try_get_asset(&999);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::AssetNotFound as u32
+            )))
+        );
     }
 }
