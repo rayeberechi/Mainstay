@@ -121,6 +121,12 @@ impl Lifecycle {
             .unwrap_or(0u32);
         let new_score = (score + 5).min(100);
         env.storage().persistent().set(&score_key(asset_id), &new_score);
+        
+        // Emit maintenance submission event
+        env.events().publish(
+            (symbol_short!("MAINT"), asset_id),
+            (task_type, engineer.clone(), env.ledger().timestamp())
+        );
     }
 
     pub fn get_maintenance_history(env: Env, asset_id: u64) -> Vec<MaintenanceRecord> {
@@ -316,5 +322,28 @@ mod tests {
                 ContractError::NoMaintenanceHistory as u32
             )))
         );
+    }
+
+    #[test]
+    fn test_submit_maintenance_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, eng_client) = setup(&env);
+        
+        let engineer = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        eng_client.register_engineer(&engineer, &hash, &issuer);
+
+        client.submit_maintenance(
+            &1u64,
+            &symbol_short!("OIL_CHG"),
+            &String::from_str(&env, "Routine maintenance"),
+            &engineer,
+        );
+
+        // Verify maintenance event was emitted
+        let events = env.events().all();
+        assert!(events.len() > 0);
     }
 }
