@@ -258,6 +258,24 @@ mod tests {
     }
 
     #[test]
+    fn test_get_asset_returns_correct_owner() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let expected_owner = Address::generate(&env);
+        let id = client.register_asset(
+            &symbol_short!("TURBINE"),
+            &String::from_str(&env, "GE LM2500 Turbine"),
+            &expected_owner,
+        );
+
+        let asset = client.get_asset(&id);
+        assert_eq!(asset.owner, expected_owner);
+    }
+
+    #[test]
     fn test_get_asset_not_found() {
         let env = Env::default();
         let contract_id = env.register(AssetRegistry, ());
