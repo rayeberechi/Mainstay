@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
-    Env, String, Symbol, Vec,
+    BytesN, Env, String, Symbol, Vec,
 };
 
 #[contracterror]
@@ -331,6 +331,22 @@ impl Lifecycle {
         let threshold = 50u32;
         Self::get_collateral_score(env, asset_id) >= threshold
     }
+
+    /// Admin-only: upgrade the contract WASM to a new hash.
+    pub fn upgrade(env: Env, admin: Address, new_wasm_hash: BytesN<32>) {
+        admin.require_auth();
+
+        let config: Config = env
+            .storage()
+            .instance()
+            .get(&CONFIG)
+            .expect("config not set");
+        if config.admin != admin {
+            panic_with_error!(&env, ContractError::UnauthorizedAdmin);
+        }
+
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+    }
 }
 
 #[cfg(test)]
@@ -552,6 +568,38 @@ mod tests {
 
         let events = env.events().all();
         assert!(events.len() > 0);
+    }
+
+    // --- Upgrade tests ---
+
+    #[test]
+    fn test_admin_can_upgrade() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let new_wasm_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+
+        // Should not panic — admin is authorized
+        client.upgrade(&admin, &new_wasm_hash);
+    }
+
+    #[test]
+    fn test_non_admin_cannot_upgrade() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let outsider = Address::generate(&env);
+        let new_wasm_hash = BytesN::from_array(&env, &[0xabu8; 32]);
+
+        let result = client.try_upgrade(&outsider, &new_wasm_hash);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::UnauthorizedAdmin as u32,
+            ))),
+        );
     }
 
     // --- Score history tests ---
