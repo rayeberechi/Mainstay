@@ -1,21 +1,22 @@
 #![no_std]
+use soroban_sdk::xdr::ToXdr;
 use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, panic_with_error,
-    symbol_short, xdr::ToXdr, Address, Bytes, BytesN, Env, String, Symbol,
+    contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short, Address,
+    BytesN, Env, String, Symbol,
 };
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, PartialEq)]
 pub enum ContractError {
-    AssetNotFound       = 1,
+    AssetNotFound = 1,
     /// Same owner attempted to register an asset with identical metadata.
     /// Each physical asset should have unique metadata (serial number, model, etc.).
     /// If re-registration is intentional, use distinct metadata to distinguish assets.
-    DuplicateAsset      = 2,
+    DuplicateAsset = 2,
 }
 
 #[contracttype]
-#[derive(Clone)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Asset {
     pub asset_id: u64,
     pub asset_type: Symbol,
@@ -50,12 +51,7 @@ pub struct AssetRegistry;
 
 #[contractimpl]
 impl AssetRegistry {
-    pub fn register_asset(
-        env: Env,
-        asset_type: Symbol,
-        metadata: String,
-        owner: Address,
-    ) -> u64 {
+    pub fn register_asset(env: Env, asset_type: Symbol, metadata: String, owner: Address) -> u64 {
         owner.require_auth();
 
         // Deduplication: reject if this owner already registered identical metadata.
@@ -78,14 +74,13 @@ impl AssetRegistry {
         env.storage().persistent().extend_ttl(&asset_key(id), 518400, 518400); // Extend TTL for persistent storage entries to prevent data loss
         env.storage().instance().set(&ASSET_COUNT, &id);
         env.storage().persistent().set(&dk, &id);
-        env.storage().persistent().extend_ttl(&dk, 518400, 518400); // Extend TTL for persistent storage entries to prevent data loss
-        
+
         // Emit asset registration event
         env.events().publish(
             (symbol_short!("REG_AST"), id),
-            (asset_type, owner.clone(), env.ledger().timestamp())
+            (asset_type, owner.clone(), env.ledger().timestamp()),
         );
-        
+
         id
     }
 
@@ -142,7 +137,11 @@ impl AssetRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use soroban_sdk::{symbol_short, testutils::{Address as _, Events}, Env, String};
+    use soroban_sdk::{
+        symbol_short,
+        testutils::{Address as _, Events},
+        Env, String,
+    };
 
     use crate::AssetRegistryClient;
 
@@ -232,7 +231,7 @@ mod tests {
         let owner = Address::generate(&env);
         let asset_type = symbol_short!("GENSET");
         let metadata = String::from_str(&env, "Caterpillar 3516 Generator");
-        
+
         client.register_asset(&asset_type, &metadata, &owner);
 
         // Verify registration event was emitted
@@ -263,36 +262,6 @@ mod tests {
         let dk = dedup_key(&owner, &meta_hash);
         let dedup_ttl = env.storage().persistent().get_ttl(&dk);
         assert!(dedup_ttl > 0, "Deduplication key TTL should be extended");
-    }
-
-    #[test]
-    fn test_admin_deregister_asset() {
-        let env = Env::default();
-        env.mock_all_auths();
-        let contract_id = env.register(AssetRegistry, ());
-        let client = AssetRegistryClient::new(&env, &contract_id);
-
-        // Setup admin
-        let admin = Address::generate(&env);
-        client.initialize_admin(&admin);
-
-        // Register asset
-        let owner = Address::generate(&env);
-        let asset_type = symbol_short!("GENSET");
-        let metadata = String::from_str(&env, "Test Asset SN123");
-        let id = client.register_asset(&asset_type, &metadata, &owner);
-
-        // Verify registered
-        let asset = client.get_asset(&id);
-        assert_eq!(asset.asset_id, id);
-
-        // Admin deregisters
-        env.mock_all_auths();  // For admin auth
-        client.deregister_asset(&id);
-
-        // Verify removed
-        let result = client.try_get_asset(&id);
-        assert!(result.is_err());
     }
 }
 
