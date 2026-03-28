@@ -91,6 +91,11 @@ impl AssetRegistry {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::AssetNotFound))
     }
 
+    /// Returns true if an asset with the given ID exists, false otherwise.
+    pub fn asset_exists(env: Env, asset_id: u64) -> bool {
+        env.storage().persistent().has(&asset_key(asset_id))
+    }
+
     pub fn asset_count(env: Env) -> u64 {
         env.storage().instance().get(&ASSET_COUNT).unwrap_or(0)
     }
@@ -637,5 +642,32 @@ mod tests {
                 ContractError::DuplicateAsset as u32,
             ))),
         );
+    }
+
+    #[test]
+    fn test_asset_exists_returns_true_for_existing_asset() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let owner = Address::generate(&env);
+        let id = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "Turbine X"),
+            &owner,
+        );
+
+        assert!(client.asset_exists(&id));
+    }
+
+    #[test]
+    fn test_asset_exists_returns_false_for_nonexistent_asset() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        assert!(!client.asset_exists(&9999u64));
     }
 }
