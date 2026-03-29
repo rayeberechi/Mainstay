@@ -49,6 +49,7 @@ pub struct Config {
     pub score_increment: u32,
     pub decay_rate: u32,
     pub decay_interval: u64,
+    pub eligibility_threshold: u32,
 }
 
 const ASSET_REGISTRY: Symbol = symbol_short!("REGISTRY");
@@ -58,6 +59,7 @@ const DEFAULT_MAX_HISTORY: u32 = 200;
 const DEFAULT_SCORE_INCREMENT: u32 = 5;
 const DEFAULT_DECAY_RATE: u32 = 5;
 const DEFAULT_DECAY_INTERVAL: u64 = 2592000; // 30 days in seconds
+const DEFAULT_ELIGIBILITY_THRESHOLD: u32 = 50;
 
 fn history_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("HIST"), asset_id)
@@ -144,6 +146,7 @@ impl Lifecycle {
             score_increment: DEFAULT_SCORE_INCREMENT,
             decay_rate: DEFAULT_DECAY_RATE,
             decay_interval: DEFAULT_DECAY_INTERVAL,
+            eligibility_threshold: DEFAULT_ELIGIBILITY_THRESHOLD,
         };
         env.storage().instance().set(&CONFIG, &config);
 
@@ -191,6 +194,23 @@ impl Lifecycle {
 
         config.decay_rate = decay_rate;
         config.decay_interval = decay_interval;
+        env.storage().instance().set(&CONFIG, &config);
+    }
+
+    /// Admin-only: update the eligibility threshold for collateral scoring.
+    pub fn update_eligibility_threshold(env: Env, admin: Address, threshold: u32) {
+        admin.require_auth();
+
+        let mut config: Config = env
+            .storage()
+            .instance()
+            .get(&CONFIG)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        if config.admin != admin {
+            panic_with_error!(&env, ContractError::UnauthorizedAdmin);
+        }
+
+        config.eligibility_threshold = threshold;
         env.storage().instance().set(&CONFIG, &config);
     }
 
@@ -529,8 +549,12 @@ impl Lifecycle {
             asset_registry::AssetRegistryClient::new(&env, &asset_registry);
         asset_registry_client.get_asset(&asset_id);
 
-        let threshold = 50u32;
-        Self::get_collateral_score(env, asset_id) >= threshold
+        let config: Config = env
+            .storage()
+            .instance()
+            .get(&CONFIG)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        Self::get_collateral_score(env, asset_id) >= config.eligibility_threshold
     }
 
     pub fn get_asset_registry(env: Env) -> Address {
@@ -1756,5 +1780,109 @@ mod tests {
         assert_eq!(client.get_maintenance_history_page(&asset_id, &10, &2).len(), 0);
         // limit=0 → empty
         assert_eq!(client.get_maintenance_history_page(&asset_id, &0, &0).len(), 0);
+    }
+
+    #[test]
+    fn test_update_eligibility_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(Lifecycle, ());
+        let client = LifecycleClient::new(&env, &contract_id);
+
+        let asset_registry = Address::generate(&env);
+        let engineer_registry = Address::generate(&env);
+        let admin = Address::generate(&env);
+
+        client.initialize(&asset_registry, &engineer_registry, &admin, &0);
+
+        // Update threshold to 100
+        client.update_eligibility_threshold(&admin, &100u32);
+
+        // Verify threshold was updated
+        env.as_contract(&contract_id, || {
+            let config: Config = env
+                .storage()
+                .instance()
+                .get(&CONFIG)
+                .expect("config not set");
+            assert_eq!(config.eligibility_threshold, 100u32);
+        });
+    }
+
+    #[test]
+    fn test_non_admin_cannot_update_eligibility_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(Lifecycle, ());
+        let client = LifecycleClient::new(&env, &contract_id);
+
+        let asset_registry = Address::generate(&env);
+        let engineer_registry = Address::generate(&env);
+        let admin = Address::generate(&env);
+        let attacker = Address::generate(&env);
+
+        client.initialize(&asset_registry, &engineer_registry, &admin, &0);
+
+        let result = client.try_update_eligibility_threshold(&attacker, &100u32);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::UnauthorizedAdmin as u32,
+            ))),
+        );
+    }
+
+    #[test]
+    fn test_is_collateral_eligible_uses_configurable_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let asset_registry_id = env.register(asset_registry::AssetRegistry, ());
+        let engineer_registry_id = env.register(engineer_registry::EngineerRegistry, ());
+        let lifecycle_id = env.register(Lifecycle, ());
+
+        let asset_registry_client = asset_registry::AssetRegistryClient::new(&env, &asset_registry_id);
+        let lifecycle_client = LifecycleClient::new(&env, &lifecycle_id);
+
+        let admin = Address::generate(&env);
+        let owner = Address::generate(&env);
+        let engineer = Address::generate(&env);
+
+        // Initialize contracts
+        asset_registry_client.initialize_admin(&admin);
+        lifecycle_client.initialize(&asset_registry_id, &engineer_registry_id, &admin, &0);
+
+        // Register asset
+        let asset_id = asset_registry_client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "CAT-3516"),
+            &owner,
+        );
+
+        // Submit maintenance to build score
+        for _ in 0..10 {
+            lifecycle_client.submit_maintenance(
+                &asset_id,
+                &symbol_short!("OIL_CHG"),
+                &String::from_str(&env, "Oil change"),
+                &engineer,
+            );
+        }
+
+        // With default threshold (50), asset should be eligible (score = 20)
+        // Actually, let's check the score first
+        let score = lifecycle_client.get_collateral_score(&asset_id);
+        
+        // Update threshold to be higher than current score
+        let new_threshold = score + 10;
+        lifecycle_client.update_eligibility_threshold(&admin, &new_threshold);
+
+        // Now asset should not be eligible
+        assert!(!lifecycle_client.is_collateral_eligible(&asset_id));
+
+        // Lower threshold back below score
+        lifecycle_client.update_eligibility_threshold(&admin, &(score - 1));
+
+        // Now asset should be eligible again
+        assert!(lifecycle_client.is_collateral_eligible(&asset_id));
     }
 }
