@@ -560,13 +560,18 @@ mod tests {
         // Simulate near-expiry by advancing ledger close to TTL threshold
         env.ledger().with_mut(|li| li.sequence_number = li.sequence_number + 518399);
 
+        // Keep the contract instance alive after the ledger advance
+        let contract_id = client.address.clone();
+        env.as_contract(&contract_id, || {
+            env.storage().instance().extend_ttl(518400, 518400);
+        });
+
         client.revoke_credential(&engineer);
 
         // After revocation the entry must still be accessible and marked inactive
         let record = client.get_engineer(&engineer);
         assert!(!record.active);
 
-        let contract_id = client.address.clone();
         let ttl = env.as_contract(&contract_id, || {
             env.storage().persistent().get_ttl(&engineer_key(&engineer))
         });
