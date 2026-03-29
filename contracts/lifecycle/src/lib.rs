@@ -119,8 +119,12 @@ impl Lifecycle {
             .unwrap_or(0)
     }
 
-    pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
+pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
         Self::get_collateral_score(env, asset_id) >= 50
+    }
+
+    pub fn batch_is_collateral_eligible(env: Env, asset_ids: Vec<u64>) -> Vec<bool> {
+        asset_ids.iter().map(|&id| Self::is_collateral_eligible(env.clone(), id)).collect()
     }
 }
 
@@ -199,7 +203,7 @@ mod tests {
 
         let engineer = Address::generate(&env);
         // Fill to cap
-        for _ in 0..3 {
+for _ in 0..3 {
             client.submit_maintenance(
                 &asset_id,
                 &symbol_short!("OIL_CHG"),
@@ -214,5 +218,42 @@ mod tests {
             &String::from_str(&env, "over cap"),
             &engineer,
         );
+    }
+
+    #[test]
+    fn test_batch_is_collateral_eligible() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, registry_client) = setup(&env, 0);
+
+        // Eligible asset: 10 maintenances -> score 50
+        let asset1 = register_asset(&env, &registry_client);
+        let engineer1 = Address::generate(&env);
+        for _ in 0..10 {
+            client.submit_maintenance(
+                &asset1,
+                &symbol_short!("OIL_CHG"),
+                &String::from_str(&env, "eligible"),
+                &engineer1,
+            );
+        }
+
+        // Eligible asset2
+        let asset2 = register_asset(&env, &registry_client);
+        let engineer2 = Address::generate(&env);
+        for _ in 0..11 {
+            client.submit_maintenance(
+                &asset2,
+                &symbol_short!("OIL_CHG"),
+                &String::from_str(&env, "eligible"),
+                &engineer2,
+            );
+        }
+
+        // Ineligible: 0 maintenances -> score 0
+        let asset3 = register_asset(&env, &registry_client);
+
+let results = client.batch_is_collateral_eligible(&vec![asset1, asset2, asset3]);
+        assert_eq!(results, vec![true, true, false]);
     }
 }
