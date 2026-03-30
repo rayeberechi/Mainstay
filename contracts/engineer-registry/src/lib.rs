@@ -13,6 +13,7 @@ pub enum ContractError {
     UntrustedIssuer = 6,
     InvalidCredentialHash = 7,
     Paused = 8,
+    IssuerNotFound = 9,
 }
 
 #[contracttype]
@@ -327,6 +328,12 @@ impl EngineerRegistry {
         if stored_admin != admin {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
+        
+        // Check if issuer exists before removing
+        if !env.storage().instance().has(&trusted_key(&issuer)) {
+            panic_with_error!(&env, ContractError::IssuerNotFound);
+        }
+        
         env.storage().instance().remove(&trusted_key(&issuer));
         let list: Vec<Address> = env.storage().instance().get(&issuer_list_key()).unwrap_or(Vec::new(&env));
         let mut new_list: Vec<Address> = Vec::new(&env);
@@ -904,6 +911,18 @@ mod tests {
         assert_eq!(
             client.try_upgrade(&admin, &BytesN::from_array(&env, &[0u8; 32])),
             Err(Ok(soroban_sdk::Error::from_contract_error(ContractError::Paused as u32)))
+        );
+    }
+
+    #[test]
+    fn test_remove_nonexistent_issuer() {
+        let env = Env::default();
+        let (client, admin) = setup(&env);
+        let nonexistent_issuer = Address::generate(&env);
+
+        assert_eq!(
+            client.try_remove_trusted_issuer(&admin, &nonexistent_issuer),
+            Err(Ok(soroban_sdk::Error::from_contract_error(ContractError::IssuerNotFound as u32)))
         );
     }
 }
