@@ -264,6 +264,10 @@ impl Lifecycle {
             panic_with_error!(&env, ContractError::AlreadyInitialized);
         }
 
+        if asset_registry == engineer_registry {
+            panic_with_error!(&env, ContractError::InvalidConfig);
+        }
+
         env.storage()
             .instance()
             .set(&ASSET_REGISTRY, &asset_registry);
@@ -1801,6 +1805,30 @@ for _ in 0..3 {
             result,
             Err(Ok(soroban_sdk::Error::from_contract_error(
                 ContractError::AlreadyInitialized as u32,
+            ))),
+        );
+    }
+
+    #[test]
+    fn test_initialize_rejects_same_registry_addresses() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let same_registry_id = env.register(AssetRegistry, ());
+        let lifecycle_id = env.register(Lifecycle, ());
+        let admin = Address::generate(&env);
+
+        let lifecycle = LifecycleClient::new(&env, &lifecycle_id);
+        let result = lifecycle.try_initialize(
+            &same_registry_id,
+            &same_registry_id,
+            &admin,
+            &0u32,
+        );
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::InvalidConfig as u32,
             ))),
         );
     }
