@@ -216,6 +216,11 @@ impl AssetRegistry {
             ids.push_back(id);
         }
 
+        // Ensure owner index TTL is extended after all batch writes
+        if !ids.is_empty() {
+            env.storage().persistent().extend_ttl(&owner_index_key(&owner), 518400, 518400);
+        }
+
         ids
     }
 
@@ -324,6 +329,11 @@ impl AssetRegistry {
     ///
     /// # Arguments
     /// * `asset_id` - The unique identifier of the asset to deregister
+    ///
+    /// # Behavior
+    /// If the dedup key has already expired from storage, the remove operation
+    /// is a no-op. This allows the same owner to re-register the same metadata
+    /// after the dedup key has naturally expired.
     ///
     /// # Panics
     /// - [`ContractError::AssetNotFound`] if no asset exists with the given ID
@@ -1197,6 +1207,30 @@ mod tests {
         assert_eq!(client.get_assets_by_owner(&owner).len(), 1);
         client.deregister_asset(&id);
         assert_eq!(client.get_assets_by_owner(&owner).len(), 0);
+    }
+
+    #[test]
+    fn test_deregister_allows_reregistration_of_same_metadata() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+
+        let owner = Address::generate(&env);
+        let metadata = String::from_str(&env, "CAT-3516");
+        
+        // Register asset
+        let id1 = client.register_asset(&symbol_short!("GENSET"), &metadata, &owner);
+        
+        // Deregister removes dedup key
+        client.deregister_asset(&id1);
+        
+        // Same owner can now re-register the same metadata
+        let id2 = client.register_asset(&symbol_short!("GENSET"), &metadata, &owner);
+        assert_ne!(id1, id2);
     }
 
     // --- Issue #142: get_admin structured error before initialization ---
