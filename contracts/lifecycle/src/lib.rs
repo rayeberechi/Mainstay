@@ -2583,4 +2583,25 @@ mod tests {
         assert!(history.contains(&asset1));
         assert!(history.contains(&asset2));
     }
+
+    #[test]
+    #[should_panic(expected = "Error(Contract, #1)")]
+    fn test_batch_submit_invalid_task_type() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, admin) = setup(&env, 0);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client, &admin);
+
+        let records = vec![
+            &env,
+            BatchRecord {
+                task_type: symbol_short!(""),
+                notes: String::from_str(&env, "Test maintenance"),
+            },
+        ];
+
+        client.batch_submit_maintenance(&asset_id, &records, &engineer);
+    }
 }
