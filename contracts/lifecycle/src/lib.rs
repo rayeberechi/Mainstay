@@ -81,6 +81,23 @@ fn score_history_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("SCHIST"), asset_id)
 }
 
+/// Append a ScoreEntry to score history, evicting the oldest entry if the
+/// vec would exceed `max_history` entries.
+fn score_history_push(env: &Env, asset_id: u64, entry: ScoreEntry, max_history: u32) {
+    let key = score_history_key(asset_id);
+    let mut history: Vec<ScoreEntry> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or_else(|| Vec::new(env));
+    if max_history > 0 && history.len() >= max_history {
+        history.remove(0);
+    }
+    history.push_back(entry);
+    env.storage().persistent().set(&key, &history);
+    env.storage().persistent().extend_ttl(&key, 518400, 518400);
+}
+
 fn last_update_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("LUPD"), asset_id)
 }
@@ -164,18 +181,7 @@ fn apply_decay(
         .persistent()
         .extend_ttl(&last_update_key(asset_id), 518400, 518400);
 
-    let mut score_history: Vec<ScoreEntry> = env
-        .storage()
-        .persistent()
-        .get(&score_history_key(asset_id))
-        .unwrap_or(Vec::new(env));
-    score_history.push_back(ScoreEntry {
-        timestamp: current_time,
-        score: new_score,
-    });
-    env.storage()
-        .persistent()
-        .set(&score_history_key(asset_id), &score_history);
+    score_history_push(env, asset_id, ScoreEntry { timestamp: current_time, score: new_score }, config.max_history);
 
     if emit_event {
         env.events().publish(
@@ -581,21 +587,7 @@ impl Lifecycle {
             .extend_ttl(&score_key(asset_id), 518400, 518400);
 
         // Append (timestamp, score) snapshot to score history
-        let mut score_history: Vec<ScoreEntry> = env
-            .storage()
-            .persistent()
-            .get(&score_history_key(asset_id))
-            .unwrap_or(Vec::new(&env));
-        score_history.push_back(ScoreEntry {
-            timestamp,
-            score: new_score,
-        });
-        env.storage()
-            .persistent()
-            .set(&score_history_key(asset_id), &score_history);
-        env.storage()
-            .persistent()
-            .extend_ttl(&score_history_key(asset_id), 518400, 518400);
+        score_history_push(&env, asset_id, ScoreEntry { timestamp, score: new_score }, config.max_history);
 
         // Update last maintenance timestamp for decay tracking
         env.storage()
@@ -683,11 +675,6 @@ impl Lifecycle {
             .persistent()
             .get(&score_key(asset_id))
             .unwrap_or(0u32);
-        let mut score_history: Vec<ScoreEntry> = env
-            .storage()
-            .persistent()
-            .get(&score_history_key(asset_id))
-            .unwrap_or(Vec::new(&env));
 
         for record in records.iter() {
             let weight = get_task_weight(&env, &record.task_type);
@@ -699,7 +686,7 @@ impl Lifecycle {
                 engineer: engineer.clone(),
                 timestamp,
             });
-            score_history.push_back(ScoreEntry { timestamp, score });
+            score_history_push(&env, asset_id, ScoreEntry { timestamp, score }, config.max_history);
         }
 
         // Add to engineer history only once per asset per batch
@@ -709,8 +696,6 @@ impl Lifecycle {
         env.storage().persistent().extend_ttl(&history_key(asset_id), 518400, 518400);
         env.storage().persistent().set(&score_key(asset_id), &score);
         env.storage().persistent().extend_ttl(&score_key(asset_id), 518400, 518400);
-        env.storage().persistent().set(&score_history_key(asset_id), &score_history);
-        env.storage().persistent().extend_ttl(&score_history_key(asset_id), 518400, 518400);
         env.storage().persistent().set(&last_update_key(asset_id), &timestamp);
         env.storage().persistent().extend_ttl(&last_update_key(asset_id), 518400, 518400);
     }
@@ -857,8 +842,6 @@ impl Lifecycle {
         apply_decay(&env, asset_id, false, false)
     }
 
-pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
-        Self::get_collateral_score(env, asset_id) >= 50
     /// Returns the full score trend: one (timestamp, score) entry per maintenance event.
     /// Get the complete score history for an asset.
     /// Returns one (timestamp, score) entry per maintenance event.
@@ -935,7 +918,7 @@ pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         
         // Use unchecked version since we already verified asset exists
-        Self::get_collateral_score_unchecked(&env, asset_id) >= config.eligibility_threshold
+        apply_decay(&env, asset_id, false, false) >= config.eligibility_threshold
     }
 
     /// Get the address of the asset registry contract.
@@ -1181,8 +1164,24 @@ pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
         );
     }
 
+    /// Check collateral eligibility for multiple assets in a single call.
+    ///
+    /// # Arguments
+    /// * `asset_ids` - Vec of asset IDs to check
+    ///
+    /// # Returns
+    /// Vec of `bool` in the same order as `asset_ids`; each entry is `true` if
+    /// the corresponding asset meets the eligibility threshold.
+    ///
+    /// # Panics
+    /// - [`ContractError::NotInitialized`] if contract has not been initialized
+    /// - [`ContractError::AssetNotFound`] if any asset ID does not exist
     pub fn batch_is_collateral_eligible(env: Env, asset_ids: Vec<u64>) -> Vec<bool> {
-        asset_ids.iter().map(|&id| Self::is_collateral_eligible(env.clone(), id)).collect()
+        let mut results: Vec<bool> = Vec::new(&env);
+        for asset_id in asset_ids.iter() {
+            results.push_back(Self::is_collateral_eligible(env.clone(), asset_id));
+        }
+        results
     }
 }
 
@@ -1993,6 +1992,72 @@ for _ in 0..3 {
         );
     }
 
+    #[test]
+    fn test_batch_is_collateral_eligible_mixed() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, _) = setup(&env, 0);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        // asset_a: 5 × ENGINE (10 pts each) = 50 → eligible
+        let asset_a = register_asset(&env, &asset_registry_client);
+        for _ in 0..5 {
+            client.submit_maintenance(
+                &asset_a,
+                &symbol_short!("ENGINE"),
+                &String::from_str(&env, ""),
+                &engineer,
+            );
+        }
+
+        // asset_b: 1 × OIL_CHG (2 pts) → not eligible
+        let asset_b = register_asset(&env, &asset_registry_client);
+        client.submit_maintenance(
+            &asset_b,
+            &symbol_short!("OIL_CHG"),
+            &String::from_str(&env, ""),
+            &engineer,
+        );
+
+        let mut ids = Vec::new(&env);
+        ids.push_back(asset_a);
+        ids.push_back(asset_b);
+
+        let results = client.batch_is_collateral_eligible(&ids);
+        assert_eq!(results.len(), 2);
+        assert!(results.get(0).unwrap());
+        assert!(!results.get(1).unwrap());
+    }
+
+    #[test]
+    fn test_batch_is_collateral_eligible_empty_input() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let results = client.batch_is_collateral_eligible(&Vec::new(&env));
+        assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn test_batch_is_collateral_eligible_unknown_asset_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let mut ids = Vec::new(&env);
+        ids.push_back(999u64);
+
+        let result = client.try_batch_is_collateral_eligible(&ids);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                asset_registry::ContractError::AssetNotFound as u32,
+            ))),
+        );
+    }
+
     // --- Upgrade tests ---
 
     #[test]
@@ -2244,6 +2309,39 @@ for _ in 0..3 {
         // After 10 REBUILD tasks the score is already 100; subsequent entries stay at 100
         assert_eq!(history.get(10).unwrap().score, 100);
         assert_eq!(history.get(11).unwrap().score, 100);
+    }
+
+    #[test]
+    fn test_score_history_pruned_at_max_history() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        // max_history = 5
+        let (client, asset_registry_client, engineer_registry_client, _) = setup(&env, 5);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        // Submit 8 records — history_key is capped at 5, score_history must also stay at 5
+        for _ in 0..5 {
+            client.submit_maintenance(
+                &asset_id,
+                &symbol_short!("OIL_CHG"),
+                &String::from_str(&env, ""),
+                &engineer,
+            );
+        }
+        assert_eq!(client.get_score_history(&asset_id).len(), 5);
+
+        // history_key is now full; further submit_maintenance calls are rejected,
+        // so trigger score_history growth via decay_score instead.
+        // Advance past one decay interval and call decay_score 3 more times.
+        for _ in 0..3 {
+            env.ledger().with_mut(|li| li.timestamp += DEFAULT_DECAY_INTERVAL);
+            client.decay_score(&asset_id);
+        }
+
+        // score_history must never exceed max_history
+        assert_eq!(client.get_score_history(&asset_id).len(), 5);
     }
 
     #[test]
