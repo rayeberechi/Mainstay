@@ -65,6 +65,12 @@ const DEFAULT_SCORE_INCREMENT: u32 = 5;
 const DEFAULT_DECAY_RATE: u32 = 5;
 const DEFAULT_DECAY_INTERVAL: u64 = 2592000; // 30 days in seconds
 const DEFAULT_ELIGIBILITY_THRESHOLD: u32 = 50;
+const EVENT_INIT: Symbol = symbol_short!("INIT");
+const EVENT_MAINT: Symbol = symbol_short!("MAINT");
+const EVENT_DECAY: Symbol = symbol_short!("DECAY");
+const EVENT_REG_AST: Symbol = symbol_short!("REG_AST");
+const EVENT_REG_ENG: Symbol = symbol_short!("REG_ENG");
+const EVENT_RST_SCR: Symbol = symbol_short!("RST_SCR");
 
 fn history_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("HIST"), asset_id)
@@ -176,7 +182,7 @@ fn apply_decay(
 
     if emit_event {
         env.events().publish(
-            (symbol_short!("DECAY"), asset_id),
+            (EVENT_DECAY, asset_id),
             (current_score, new_score, current_time),
         );
     }
@@ -277,7 +283,7 @@ impl Lifecycle {
         env.storage().instance().set(&CONFIG, &config);
 
         env.events().publish(
-            (symbol_short!("INIT"),),
+            (EVENT_INIT,),
             (asset_registry, engineer_registry, admin),
         );
     }
@@ -557,7 +563,7 @@ impl Lifecycle {
 
         // Emit maintenance submission event
         env.events().publish(
-            (symbol_short!("MAINT"), asset_id),
+            (EVENT_MAINT, asset_id),
             (task_type, engineer, timestamp),
         );
     }
@@ -913,7 +919,7 @@ impl Lifecycle {
         env.storage().instance().set(&ASSET_REGISTRY, &new_registry);
 
         env.events().publish(
-            (symbol_short!("UPD_AST"),),
+            (EVENT_REG_AST,),
             (admin, new_registry),
         );
     }
@@ -958,7 +964,7 @@ impl Lifecycle {
         env.storage().instance().set(&ENG_REGISTRY, &new_registry);
 
         env.events().publish(
-            (symbol_short!("UPD_ENG"),),
+            (EVENT_REG_ENG,),
             (admin, new_registry),
         );
     }
@@ -1031,7 +1037,7 @@ impl Lifecycle {
         env.storage().persistent().extend_ttl(&score_key(asset_id), 518400, 518400);
 
         env.events().publish(
-            (symbol_short!("RST_SCR"), asset_id),
+            (EVENT_RST_SCR, asset_id),
             (admin, env.ledger().timestamp()),
         );
     }
@@ -2140,7 +2146,7 @@ mod tests {
         // Topics: (symbol("DECAY"), asset_id)
         let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
         let t1: u64 = topics.get(1).unwrap().try_into_val(&env).unwrap();
-        assert_eq!(t0, symbol_short!("DECAY"));
+        assert_eq!(t0, EVENT_DECAY);
         assert_eq!(t1, asset_id);
 
         // Data: (old_score, new_score, timestamp)
@@ -2339,6 +2345,46 @@ mod tests {
                 ContractError::NotInitialized as u32,
             ))),
         );
+    }
+
+    #[test]
+    fn test_update_asset_registry_emits_reg_ast_topic() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let new_registry = Address::generate(&env);
+
+        let before_len = env.events().all().len();
+
+        client.update_asset_registry(&admin, &new_registry);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), before_len + 1);
+
+        let (_, topics, _data) = events.get(before_len).unwrap();
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, EVENT_REG_AST);
+    }
+
+    #[test]
+    fn test_update_engineer_registry_emits_reg_eng_topic() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let new_registry = Address::generate(&env);
+
+        let before_len = env.events().all().len();
+
+        client.update_engineer_registry(&admin, &new_registry);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), before_len + 1);
+
+        let (_, topics, _data) = events.get(before_len).unwrap();
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, EVENT_REG_ENG);
     }
 
     // --- Issue #144: batch_submit_maintenance updates score_history_key ---
