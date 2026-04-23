@@ -2104,6 +2104,33 @@ mod tests {
     }
 
     #[test]
+    fn test_is_collateral_eligible_flips_false_after_decay() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, admin) = setup(&env, 0);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        // Build score to exactly the eligibility threshold (50) via 10 × FILTER (5 pts each)
+        for _ in 0..10 {
+            client.submit_maintenance(
+                &asset_id,
+                &symbol_short!("FILTER"),
+                &String::from_str(&env, "notes"),
+                &engineer,
+            );
+        }
+        assert!(client.is_collateral_eligible(&asset_id));
+
+        // Fast decay: 5 points per 60 seconds; advance 2 intervals → -10 pts → score 40 < 50
+        client.update_decay_config(&admin, &5, &60);
+        env.ledger().with_mut(|li| li.timestamp = li.timestamp + 120);
+
+        assert!(!client.is_collateral_eligible(&asset_id));
+    }
+
+    #[test]
     fn test_full_cross_contract_threshold_boundary() {
         let env = Env::default();
         env.mock_all_auths();
