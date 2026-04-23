@@ -610,15 +610,15 @@ impl AssetRegistry {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
 
-        env.events().publish(
-            (symbol_short!("UPGRADE"), admin.clone()),
-            new_wasm_hash.clone(),
-        );
-
         #[cfg(not(test))]
         {
             env.deployer().update_current_contract_wasm(new_wasm_hash);
         }
+
+        env.events().publish(
+            (symbol_short!("UPGRADE"), admin.clone()),
+            new_wasm_hash.clone(),
+        );
     }
 
     /// Admin-only function to allow a new asset type symbol.
