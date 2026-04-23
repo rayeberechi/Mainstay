@@ -485,6 +485,31 @@ impl EngineerRegistry {
             panic_with_error!(&env, ContractError::IssuerNotFound);
         }
         
+        // Revoke all engineers registered by this issuer
+        let engineers: Vec<Address> = env
+            .storage()
+            .persistent()
+            .get(&issuer_engineers_key(&issuer))
+            .unwrap_or(Vec::new(&env));
+        for engineer_addr in engineers.iter() {
+            if let Some(mut record) = env.storage().persistent().get::<_, Engineer>(&engineer_key(&engineer_addr)) {
+                if record.active {
+                    // Extend TTL before write to ensure consistency
+                    env.storage().persistent().extend_ttl(&engineer_key(&engineer_addr), 518400, 518400);
+                    record.active = false;
+                    env.storage()
+                        .persistent()
+                        .set(&engineer_key(&engineer_addr), &record);
+                    
+                    // Emit credential revocation event
+                    env.events().publish(
+                        (REVOKE_TOPIC, engineer_addr.clone()),
+                        (record.issuer.clone(), env.ledger().timestamp()),
+                    );
+                }
+            }
+        }
+        
         env.storage().instance().remove(&trusted_key(&issuer));
         let list: Vec<Address> = env.storage().instance().get(&issuer_list_key()).unwrap_or(Vec::new(&env));
         let mut new_list: Vec<Address> = Vec::new(&env);
@@ -1456,6 +1481,41 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
             client.try_remove_trusted_issuer(&admin, &nonexistent_issuer),
             Err(Ok(soroban_sdk::Error::from_contract_error(ContractError::IssuerNotFound as u32)))
         );
+    }
+
+    #[test]
+    fn test_remove_trusted_issuer_revokes_engineers() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+
+        let issuer = Address::generate(&env);
+        let engineer1 = Address::generate(&env);
+        let engineer2 = Address::generate(&env);
+        let hash1 = BytesN::from_array(&env, &[1u8; 32]);
+        let hash2 = BytesN::from_array(&env, &[2u8; 32]);
+
+        // Add issuer as trusted
+        client.add_trusted_issuer(&admin, &issuer);
+
+        // Register two engineers
+        client.register_engineer(&engineer1, &hash1, &issuer, &31_536_000);
+        client.register_engineer(&engineer2, &hash2, &issuer, &31_536_000);
+
+        // Verify engineers are active
+        assert!(client.verify_engineer(&engineer1));
+        assert!(client.verify_engineer(&engineer2));
+
+        // Remove the trusted issuer
+        client.remove_trusted_issuer(&admin, &issuer);
+
+        // Verify engineers are now revoked
+        assert!(!client.verify_engineer(&engineer1));
+        assert!(!client.verify_engineer(&engineer2));
+
+        // Check status
+        assert_eq!(client.get_engineer_status(&engineer1), EngineerStatus::Revoked);
+        assert_eq!(client.get_engineer_status(&engineer2), EngineerStatus::Revoked);
     }
 
     #[test]
