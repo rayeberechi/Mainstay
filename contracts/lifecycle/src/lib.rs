@@ -19,6 +19,8 @@ pub enum ContractError {
     Paused = 9,
     InvalidTaskType = 10,
     PendingAdminAlreadyExists = 11,
+    ZeroAddress = 12,
+    SameRegistryAddress = 13,
 }
 
 #[contracttype]
@@ -166,6 +168,10 @@ fn set_asset_registry_addr(env: &Env, addr: &Address) {
 fn set_engineer_registry_addr(env: &Env, addr: &Address) {
     env.storage().persistent().set(&ENG_REGISTRY, addr);
     env.storage().persistent().extend_ttl(&ENG_REGISTRY, 518400, 518400);
+}
+
+fn is_zero_address(env: &Env, addr: &Address) -> bool {
+    *addr == Address::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4")
 }
 
 fn is_paused(env: &Env) -> bool {
@@ -1236,6 +1242,12 @@ impl Lifecycle {
         if config.admin != admin {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
+        if is_zero_address(&env, &new_registry) {
+            panic_with_error!(&env, ContractError::ZeroAddress);
+        }
+        if new_registry == get_engineer_registry_addr(&env) {
+            panic_with_error!(&env, ContractError::SameRegistryAddress);
+        }
 
         set_asset_registry_addr(&env, &new_registry);
 
@@ -1275,6 +1287,12 @@ impl Lifecycle {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         if config.admin != admin {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
+        }
+        if is_zero_address(&env, &new_registry) {
+            panic_with_error!(&env, ContractError::ZeroAddress);
+        }
+        if new_registry == get_asset_registry_addr(&env) {
+            panic_with_error!(&env, ContractError::SameRegistryAddress);
         }
 
         set_engineer_registry_addr(&env, &new_registry);
@@ -4192,6 +4210,74 @@ mod tests {
         let (_, topics, _data) = events.get(0).unwrap();
         let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
         assert_eq!(t0, EVENT_REG_ENG);
+    }
+
+    #[test]
+    fn test_update_asset_registry_zero_address_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let zero = Address::from_str(&env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4");
+
+        let result = client.try_update_asset_registry(&admin, &zero);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::ZeroAddress as u32,
+            ))),
+        );
+    }
+
+    #[test]
+    fn test_update_engineer_registry_zero_address_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let zero = Address::from_str(&env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4");
+
+        let result = client.try_update_engineer_registry(&admin, &zero);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::ZeroAddress as u32,
+            ))),
+        );
+    }
+
+    #[test]
+    fn test_update_asset_registry_same_as_engineer_registry_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, engineer_registry_client, admin) = setup(&env, 0);
+        let eng_addr = engineer_registry_client.address.clone();
+
+        let result = client.try_update_asset_registry(&admin, &eng_addr);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::SameRegistryAddress as u32,
+            ))),
+        );
+    }
+
+    #[test]
+    fn test_update_engineer_registry_same_as_asset_registry_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, _, admin) = setup(&env, 0);
+        let asset_addr = asset_registry_client.address.clone();
+
+        let result = client.try_update_engineer_registry(&admin, &asset_addr);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::SameRegistryAddress as u32,
+            ))),
+        );
     }
 
     // --- Issue #144: batch_submit_maintenance updates score_history_key ---
