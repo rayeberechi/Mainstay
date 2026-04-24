@@ -456,6 +456,8 @@ impl AssetRegistry {
         }
         env.storage().instance().set(&ADMIN_KEY, &pending_admin);
         env.storage().instance().remove(&PENDING_ADMIN_KEY);
+        env.events()
+            .publish((symbol_short!("ADMIN_SET"),), (pending_admin,));
     }
 
     /// Admin-only function to pause the contract.
@@ -1005,6 +1007,31 @@ mod tests {
         client.accept_admin(&new_admin);
 
         assert_eq!(client.get_admin(), new_admin);
+    }
+
+    #[test]
+    fn test_accept_admin_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        let new_admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+
+        client.propose_admin(&admin, &new_admin);
+        client.accept_admin(&new_admin);
+
+        // propose_admin emits PROP_ADM; accept_admin must emit ADMIN_SET
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+        use soroban_sdk::TryIntoVal;
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, symbol_short!("ADMIN_SET"));
+
+        let (emitted_admin,): (Address,) = data.try_into_val(&env).unwrap();
+        assert_eq!(emitted_admin, new_admin);
     }
 
     #[test]
