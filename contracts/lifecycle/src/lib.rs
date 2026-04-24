@@ -54,10 +54,12 @@ pub struct Config {
 const ASSET_REGISTRY: Symbol = symbol_short!("REGISTRY");
 const ENG_REGISTRY: Symbol = symbol_short!("ENG_REG");
 const CONFIG: Symbol = symbol_short!("CONFIG");
+const ELIG_THRESHOLD: Symbol = symbol_short!("ELIG_THR");
 const DEFAULT_MAX_HISTORY: u32 = 200;
 const DEFAULT_SCORE_INCREMENT: u32 = 5;
 const DEFAULT_DECAY_RATE: u32 = 5;
 const DEFAULT_DECAY_INTERVAL: u64 = 2592000; // 30 days in seconds
+const DEFAULT_ELIGIBILITY_THRESHOLD: u32 = 50;
 
 fn history_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("HIST"), asset_id)
@@ -192,6 +194,32 @@ impl Lifecycle {
         config.decay_rate = decay_rate;
         config.decay_interval = decay_interval;
         env.storage().instance().set(&CONFIG, &config);
+    }
+
+    /// Admin-only: update the eligibility threshold for collateral scoring.
+    pub fn update_eligibility_threshold(env: Env, admin: Address, new_threshold: u32) {
+        admin.require_auth();
+
+        let config: Config = env
+            .storage()
+            .instance()
+            .get(&CONFIG)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        if config.admin != admin {
+            panic_with_error!(&env, ContractError::UnauthorizedAdmin);
+        }
+
+        let old_threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&ELIG_THRESHOLD)
+            .unwrap_or(DEFAULT_ELIGIBILITY_THRESHOLD);
+        env.storage().instance().set(&ELIG_THRESHOLD, &new_threshold);
+
+        env.events().publish(
+            (symbol_short!("CFG_UPD"),),
+            (old_threshold, new_threshold),
+        );
     }
 
     pub fn submit_maintenance(
@@ -529,7 +557,11 @@ impl Lifecycle {
             asset_registry::AssetRegistryClient::new(&env, &asset_registry);
         asset_registry_client.get_asset(&asset_id);
 
-        let threshold = 50u32;
+        let threshold: u32 = env
+            .storage()
+            .instance()
+            .get(&ELIG_THRESHOLD)
+            .unwrap_or(DEFAULT_ELIGIBILITY_THRESHOLD);
         Self::get_collateral_score(env, asset_id) >= threshold
     }
 
@@ -1756,5 +1788,70 @@ mod tests {
         assert_eq!(client.get_maintenance_history_page(&asset_id, &10, &2).len(), 0);
         // limit=0 → empty
         assert_eq!(client.get_maintenance_history_page(&asset_id, &0, &0).len(), 0);
+    }
+
+    // --- Issue #368: update_eligibility_threshold emits CFG_UPD event ---
+
+    #[test]
+    fn test_update_eligibility_threshold_emits_cfg_upd_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+
+        client.update_eligibility_threshold(&admin, &75);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+
+        let (_, topics, data) = events.get(0).unwrap();
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, symbol_short!("CFG_UPD"));
+
+        let (old_threshold, new_threshold): (u32, u32) = data.try_into_val(&env).unwrap();
+        assert_eq!(old_threshold, DEFAULT_ELIGIBILITY_THRESHOLD);
+        assert_eq!(new_threshold, 75u32);
+    }
+
+    #[test]
+    fn test_update_eligibility_threshold_affects_eligibility() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, admin) = setup(&env, 0);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        // Build score to 10 (one ENGINE task)
+        client.submit_maintenance(
+            &asset_id,
+            &symbol_short!("ENGINE"),
+            &String::from_str(&env, ""),
+            &engineer,
+        );
+        assert_eq!(client.get_collateral_score(&asset_id), 10);
+
+        // Default threshold is 50 — not eligible
+        assert!(!client.is_collateral_eligible(&asset_id));
+
+        // Lower threshold to 10 — now eligible
+        client.update_eligibility_threshold(&admin, &10);
+        assert!(client.is_collateral_eligible(&asset_id));
+    }
+
+    #[test]
+    fn test_non_admin_cannot_update_eligibility_threshold() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let outsider = Address::generate(&env);
+        let result = client.try_update_eligibility_threshold(&outsider, &75);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::UnauthorizedAdmin as u32,
+            ))),
+        );
     }
 }
