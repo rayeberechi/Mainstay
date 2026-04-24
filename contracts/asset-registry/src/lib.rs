@@ -469,7 +469,7 @@ impl AssetRegistry {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
         env.storage().instance().set(&PAUSED_KEY, &true);
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage().instance().extend_ttl(518400, 518400);
     }
 
     /// Admin-only function to unpause the contract.
@@ -483,7 +483,7 @@ impl AssetRegistry {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
         env.storage().instance().set(&PAUSED_KEY, &false);
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage().instance().extend_ttl(518400, 518400);
     }
 
     /// Check if the contract is currently paused.
@@ -702,7 +702,7 @@ impl AssetRegistry {
 
         #[cfg(not(test))]
         {
-            env.deployer().update_current_contract_wasm(new_wasm_hash);
+            env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
         }
 
         env.events().publish(
