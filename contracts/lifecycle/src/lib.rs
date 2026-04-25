@@ -497,9 +497,12 @@ impl Lifecycle {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
 
+        let old_increment = config.score_increment;
         config.score_increment = score_increment;
         env.storage().persistent().set(&CONFIG, &config);
         env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.events()
+            .publish((symbol_short!("CFG_UPD"),), (old_increment, score_increment));
     }
 
     /// Admin-only function to update the decay rate and interval for collateral score decay.
@@ -2089,6 +2092,28 @@ mod tests {
                 ContractError::InvalidConfig as u32,
             ))),
         );
+    }
+
+    #[test]
+    fn test_update_score_increment_emits_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, admin) = setup(&env, 0);
+        let old_increment = client.get_config().score_increment;
+        let new_increment: u32 = 12;
+
+        client.update_score_increment(&admin, &new_increment);
+
+        let events = env.events().all();
+        assert_eq!(events.len(), 1);
+        let (_, topics, data) = events.get(0).unwrap();
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, symbol_short!("CFG_UPD"));
+
+        let (emitted_old, emitted_new): (u32, u32) = data.try_into_val(&env).unwrap();
+        assert_eq!(emitted_old, old_increment);
+        assert_eq!(emitted_new, new_increment);
     }
 
     #[test]
