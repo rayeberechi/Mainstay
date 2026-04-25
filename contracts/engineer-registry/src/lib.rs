@@ -506,6 +506,11 @@ impl EngineerRegistry {
             .unwrap_or(Vec::new(&env));
         if !list.contains(issuer.clone()) {
             list.push_back(issuer.clone());
+            env.storage().instance().set(&issuer_list_key(), &list);
+            env.events()
+                .publish((symbol_short!("ISS_ADD"), admin), (issuer,));
+        } else {
+            env.storage().instance().set(&issuer_list_key(), &list);
         }
         env.storage().instance().set(&issuer_list_key(), &list);
         env.storage().instance().extend_ttl(518400, 518400);
@@ -1401,6 +1406,32 @@ mod tests {
 
         let (emitted_issuer,): (Address,) = data.try_into_val(&env).unwrap();
         assert_eq!(emitted_issuer, issuer);
+    }
+
+    #[test]
+    fn test_add_trusted_issuer_no_duplicate_event() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+
+        let issuer = Address::generate(&env);
+        client.add_trusted_issuer(&admin, &issuer);
+        // Adding the same issuer again should not emit a second ISS_ADD event
+        client.add_trusted_issuer(&admin, &issuer);
+
+        let events = env.events().all();
+        use soroban_sdk::TryIntoVal;
+        let iss_add_count = events
+            .iter()
+            .filter(|(_, topics, _)| {
+                topics
+                    .get(0)
+                    .and_then(|v| TryIntoVal::<_, Symbol>::try_into_val(&v, &env).ok())
+                    .map(|s| s == symbol_short!("ISS_ADD"))
+                    .unwrap_or(false)
+            })
+            .count();
+        assert_eq!(iss_add_count, 1, "ISS_ADD should only be emitted once");
     }
 
     #[test]
