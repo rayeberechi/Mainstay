@@ -117,6 +117,11 @@ impl EngineerRegistry {
         if !env.storage().instance().has(&trusted_key(&issuer)) {
             panic_with_error!(&env, ContractError::UntrustedIssuer);
         }
+        assert!(
+            credential_hash != BytesN::from_array(&env, &[0u8; 32]),
+            "credential hash cannot be zero"
+        );
+        assert!(validity_period > 0, "validity_period must be greater than zero");
         if credential_hash == BytesN::from_array(&env, &[0u8; 32]) {
             panic_with_error!(&env, ContractError::InvalidCredentialHash);
         }
@@ -1320,6 +1325,11 @@ mod tests {
         assert!(ttl > 0, "TTL must be extended after revocation");
     }
 
+    // --- Issue #369: register_engineer rejects validity_period = 0 ---
+
+    #[test]
+    #[should_panic(expected = "validity_period must be greater than zero")]
+    fn test_register_engineer_zero_validity_period_rejected() {
     #[test]
     fn test_add_trusted_issuer_emits_event() {
         let env = Env::default();
@@ -1921,6 +1931,7 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
 
         client.add_trusted_issuer(&admin, &issuer);
+        client.register_engineer(&engineer, &hash, &issuer, &0);
         client.register_engineer(&engineer, &hash, &issuer, &100); // 100 seconds validity
         env.ledger().set_timestamp(200); // Move time forward
 
