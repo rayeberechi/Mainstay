@@ -52,6 +52,7 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const REG_ENG_TOPIC: Symbol = symbol_short!("REG_ENG");
 const REVOKE_TOPIC: Symbol = symbol_short!("REV_CRED");
 const MIN_VALIDITY_PERIOD: u64 = 86_400;
+const EVENT_PROP_ADMIN: Symbol = symbol_short!("PROP_ADMIN");
 
 fn is_paused(env: &Env) -> bool {
     env.storage().persistent().get(&PAUSED_KEY).unwrap_or(false)
@@ -394,6 +395,8 @@ impl EngineerRegistry {
         env.storage()
             .instance()
             .set(&pending_admin_key(), &new_admin);
+        env.events()
+            .publish((EVENT_PROP_ADMIN,), (admin, new_admin));
     }
 
     /// Accept the admin transfer (step 2 of 2-step transfer).
@@ -2200,11 +2203,26 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
     }
 
     #[test]
+    fn test_propose_admin_emits_event() {
     fn test_pause_state_persists_across_instance_ttl_boundary() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, admin) = setup(&env);
 
+        let new_admin = Address::generate(&env);
+        client.propose_admin(&admin, &new_admin);
+
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+
+        use soroban_sdk::TryIntoVal;
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(topic, EVENT_PROP_ADMIN);
+
+        let (emitted_admin, emitted_new_admin): (Address, Address) =
+            data.try_into_val(&env).unwrap();
+        assert_eq!(emitted_admin, admin);
+        assert_eq!(emitted_new_admin, new_admin);
         let issuer = Address::generate(&env);
         client.add_trusted_issuer(&admin, &issuer);
 

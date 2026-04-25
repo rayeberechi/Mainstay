@@ -80,6 +80,8 @@ const EVENT_REG_AST: Symbol = symbol_short!("REG_AST");
 const EVENT_REG_ENG: Symbol = symbol_short!("REG_ENG");
 const EVENT_RST_SCR: Symbol = symbol_short!("RST_SCR");
 const EVENT_XFER: Symbol = symbol_short!("XFER");
+const EVENT_PROP_ADMIN: Symbol = symbol_short!("PROP_ADMIN");
+const EVENT_ADMIN_SET: Symbol = symbol_short!("ADMIN_SET");
 
 fn history_key(asset_id: u64) -> (Symbol, u64) {
     (symbol_short!("HIST"), asset_id)
@@ -474,6 +476,8 @@ impl Lifecycle {
             panic_with_error!(&env, ContractError::PendingAdminAlreadyExists);
         }
         env.storage().instance().set(&PENDING_ADMIN_KEY, &new_admin);
+        env.events()
+            .publish((EVENT_PROP_ADMIN,), (admin, new_admin));
     }
 
     /// Accept the admin transfer (step 2 of 2-step transfer).
@@ -495,10 +499,12 @@ impl Lifecycle {
             .persistent()
             .get(&CONFIG)
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
-        config.admin = pending_admin;
+        config.admin = pending_admin.clone();
         env.storage().persistent().set(&CONFIG, &config);
         env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
         env.storage().instance().remove(&PENDING_ADMIN_KEY);
+        env.events()
+            .publish((EVENT_ADMIN_SET,), (pending_admin,));
     }
 
     /// Admin-only function to update the score increment configuration.
@@ -5299,6 +5305,8 @@ mod tests {
       main
     }
 
+    #[test]
+    fn test_propose_admin_emits_event() {
     // --- Issue #367: update_decay_config emits CFG_UPD event ---
 
     #[test]
@@ -5307,6 +5315,25 @@ mod tests {
         env.mock_all_auths();
 
         let (client, _, _, admin) = setup(&env, 0);
+        let new_admin = Address::generate(&env);
+
+        client.propose_admin(&admin, &new_admin);
+
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+
+        use soroban_sdk::TryIntoVal;
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(topic, EVENT_PROP_ADMIN);
+
+        let (emitted_admin, emitted_new_admin): (Address, Address) =
+            data.try_into_val(&env).unwrap();
+        assert_eq!(emitted_admin, admin);
+        assert_eq!(emitted_new_admin, new_admin);
+    }
+
+    #[test]
+    fn test_accept_admin_emits_event() {
 
         client.update_decay_config(&admin, &10, &120);
 
@@ -5334,6 +5361,20 @@ mod tests {
         env.mock_all_auths();
 
         let (client, _, _, admin) = setup(&env, 0);
+        let new_admin = Address::generate(&env);
+
+        client.propose_admin(&admin, &new_admin);
+        client.accept_admin();
+
+        let events = env.events().all();
+        let (_, topics, data) = events.last().unwrap();
+
+        use soroban_sdk::TryIntoVal;
+        let topic: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(topic, EVENT_ADMIN_SET);
+
+        let emitted_admin: Address = data.try_into_val(&env).unwrap();
+        assert_eq!(emitted_admin, new_admin);
 
         client.update_eligibility_threshold(&admin, &75);
 
