@@ -46,7 +46,7 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const ASSET_TYPE_PREFIX: Symbol = symbol_short!("AST_TYPE");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
-pub const DEREG_TOPIC: Symbol = symbol_short!("DEREG_AST");
+pub const DEREG_TOPIC: Symbol = symbol_short!("DEREG");
 pub const ADD_TYPE_TOPIC: Symbol = symbol_short!("ADD_TYPE");
 pub const RM_TYPE_TOPIC: Symbol = symbol_short!("RM_TYPE");
 
@@ -473,7 +473,7 @@ impl AssetRegistry {
         env.storage().persistent().set(&PAUSED_KEY, &true);
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &true);
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("PAUSED"),), (admin,));
     }
 
@@ -490,7 +490,7 @@ impl AssetRegistry {
         env.storage().persistent().set(&PAUSED_KEY, &false);
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &false);
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("UNPAUSED"),), (admin,));
     }
 
@@ -710,7 +710,7 @@ impl AssetRegistry {
 
         #[cfg(not(test))]
         {
-            env.deployer().update_current_contract_wasm(new_wasm_hash);
+            env.deployer().update_current_contract_wasm(new_wasm_hash.clone());
         }
 
         env.events().publish(
@@ -2304,6 +2304,34 @@ mod tests {
             soroban_sdk::FromVal::from_val(&env, &data);
         assert_eq!(emitted_type, symbol_short!("GENSET"));
         assert_eq!(emitted_owner, owner);
+    }
+
+    #[test]
+    fn test_deregister_asset_emits_dereg_topic() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+        client.add_asset_type(&admin, &symbol_short!("GENSET"));
+
+        let owner = Address::generate(&env);
+        let id = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "CAT-3516"),
+            &owner,
+        );
+
+        client.deregister_asset(&owner, &id);
+
+        let events = env.events().all();
+        let (_, topics, _): (_, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) =
+            events.last().unwrap();
+        use soroban_sdk::TryIntoVal;
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, symbol_short!("DEREG"), "deregister_asset must emit DEREG topic (≤8 chars)");
     }
 
     #[test]
