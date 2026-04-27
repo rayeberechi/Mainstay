@@ -20,6 +20,7 @@ pub enum ContractError {
     PendingAdminAlreadyExists = 9,
     TypeInUse = 10,
     EmptyMetadata = 11,
+    SameOwner = 12,
 }
 
 #[contracttype]
@@ -46,7 +47,7 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const ADMIN_KEY: Symbol = symbol_short!("ADMIN");
 const ASSET_TYPE_PREFIX: Symbol = symbol_short!("AST_TYPE");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
-pub const DEREG_TOPIC: Symbol = symbol_short!("DEREG_AST");
+pub const DEREG_TOPIC: Symbol = symbol_short!("DEREG");
 pub const ADD_TYPE_TOPIC: Symbol = symbol_short!("ADD_TYPE");
 pub const RM_TYPE_TOPIC: Symbol = symbol_short!("RM_TYPE");
 
@@ -187,7 +188,7 @@ impl AssetRegistry {
             panic_with_error!(&env, ContractError::DuplicateAsset);
         }
 
-        let id: u64 = env.storage().instance().get(&ASSET_COUNT).unwrap_or(0) + 1;
+        let id: u64 = env.storage().persistent().get(&ASSET_COUNT).unwrap_or(0) + 1;
         let asset = Asset {
             asset_id: id,
             asset_type: asset_type.clone(),
@@ -200,7 +201,8 @@ impl AssetRegistry {
         env.storage()
             .persistent()
             .extend_ttl(&asset_key(id), 518400, 518400); // Extend TTL for persistent storage entries to prevent data loss
-        env.storage().instance().set(&ASSET_COUNT, &id);
+        env.storage().persistent().set(&ASSET_COUNT, &id);
+        env.storage().persistent().extend_ttl(&ASSET_COUNT, 518400, 518400);
         env.storage().persistent().set(&dk, &id);
 
         // Update owner index
@@ -233,7 +235,7 @@ impl AssetRegistry {
         let mut ids: Vec<u64> = Vec::new(&env);
         let mut batch_hashes: Vec<BytesN<32>> = Vec::new(&env);
 
-        let mut next_id: u64 = env.storage().instance().get(&ASSET_COUNT).unwrap_or(0);
+        let mut next_id: u64 = env.storage().persistent().get(&ASSET_COUNT).unwrap_or(0);
 
         for asset_in in assets.iter() {
             if !Self::is_valid_asset_type(env.clone(), asset_in.asset_type.clone()) {
@@ -296,8 +298,9 @@ impl AssetRegistry {
             ids.push_back(id);
         }
 
-        if next_id > env.storage().instance().get(&ASSET_COUNT).unwrap_or(0) {
-            env.storage().instance().set(&ASSET_COUNT, &next_id);
+        if next_id > env.storage().persistent().get(&ASSET_COUNT).unwrap_or(0) {
+            env.storage().persistent().set(&ASSET_COUNT, &next_id);
+            env.storage().persistent().extend_ttl(&ASSET_COUNT, 518400, 518400);
         }
 
         // Ensure owner index TTL is extended after all batch writes
@@ -388,7 +391,7 @@ impl AssetRegistry {
     /// # Returns
     /// The total number of assets that have been registered
     pub fn asset_count(env: Env) -> u64 {
-        env.storage().instance().get(&ASSET_COUNT).unwrap_or(0)
+        env.storage().persistent().get(&ASSET_COUNT).unwrap_or(0)
     }
 
     /// Initialize the admin address for the contract.
@@ -662,6 +665,10 @@ impl AssetRegistry {
 
         if asset.owner != current_owner {
             panic_with_error!(&env, ContractError::UnauthorizedOwner);
+        }
+
+        if current_owner == new_owner {
+            panic_with_error!(&env, ContractError::SameOwner);
         }
 
         // Move dedup key to new owner
@@ -1333,6 +1340,35 @@ mod tests {
 
         let asset = client.get_asset(&id);
         assert_eq!(asset.owner, new_owner);
+    }
+
+    #[test]
+    fn test_transfer_asset_same_owner_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+        client.add_asset_type(&admin, &symbol_short!("GENSET"));
+
+        let owner = Address::generate(&env);
+        let id = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "CAT-3516"),
+            &owner,
+        );
+
+        let result = client.try_transfer_asset(&id, &owner, &owner);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::SameOwner as u32
+            )))
+        );
+        // Asset still belongs to original owner
+        assert_eq!(client.get_asset(&id).owner, owner);
     }
 
     #[test]
@@ -2362,6 +2398,34 @@ mod tests {
     }
 
     #[test]
+    fn test_deregister_asset_emits_dereg_topic() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+        client.add_asset_type(&admin, &symbol_short!("GENSET"));
+
+        let owner = Address::generate(&env);
+        let id = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "CAT-3516"),
+            &owner,
+        );
+
+        client.deregister_asset(&owner, &id);
+
+        let events = env.events().all();
+        let (_, topics, _): (_, soroban_sdk::Vec<soroban_sdk::Val>, soroban_sdk::Val) =
+            events.last().unwrap();
+        use soroban_sdk::TryIntoVal;
+        let t0: Symbol = topics.get(0).unwrap().try_into_val(&env).unwrap();
+        assert_eq!(t0, symbol_short!("DEREG"), "deregister_asset must emit DEREG topic (≤8 chars)");
+    }
+
+    #[test]
     fn test_deregister_nonexistent_asset_returns_structured_error() {
         let env = Env::default();
         env.mock_all_auths();
@@ -2484,6 +2548,47 @@ mod tests {
             result,
             Err(Ok(ContractError::EmptyMetadata.into()))
         );
+    }
+
+    #[test]
+    fn test_asset_count_survives_instance_ttl_expiry() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+        client.add_asset_type(&admin, &symbol_short!("GENSET"));
+
+        let owner = Address::generate(&env);
+        let id1 = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "Asset One"),
+            &owner,
+        );
+        assert_eq!(id1, 1);
+        assert_eq!(client.asset_count(), 1);
+
+        // Simulate instance storage TTL expiry by wiping instance keys
+        env.as_contract(&contract_id, || {
+            env.storage().instance().remove(&ADMIN_KEY);
+        });
+
+        // ASSET_COUNT lives in persistent storage — must still return 1
+        assert_eq!(
+            client.asset_count(),
+            1,
+            "asset_count must survive instance TTL expiry"
+        );
+
+        // Next registration must get ID 2, not 1 (no collision)
+        let id2 = client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "Asset Two"),
+            &owner,
+        );
+        assert_eq!(id2, 2, "ID assignment must be consistent after instance TTL expiry");
     }
 
     #[test]
