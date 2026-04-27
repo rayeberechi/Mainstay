@@ -21,6 +21,7 @@ pub enum ContractError {
     PendingAdminAlreadyExists = 11,
     ZeroAddress = 12,
     SameRegistryAddress = 13,
+    IndexOutOfBounds = 14,
 }
 
 #[contracttype]
@@ -1064,6 +1065,9 @@ impl Lifecycle {
         offset: u32,
         limit: u32,
     ) -> Vec<MaintenanceRecord> {
+        let asset_registry = get_asset_registry_addr(&env);
+        verify_asset_exists(&env, &asset_registry, &asset_id);
+
         let history: Vec<MaintenanceRecord> = env
             .storage()
             .persistent()
@@ -1216,8 +1220,7 @@ impl Lifecycle {
     pub fn is_collateral_eligible(env: Env, asset_id: u64) -> bool {
         // Verify asset exists before checking eligibility
         let asset_registry = get_asset_registry_addr(&env);
-        let asset_registry_client = asset_registry::AssetRegistryClient::new(&env, &asset_registry);
-        asset_registry_client.get_asset(&asset_id);
+        verify_asset_exists(&env, &asset_registry, &asset_id);
 
         let config: Config = env
             .storage()
@@ -2665,6 +2668,7 @@ mod tests {
 
         // Asset ID 9999 was never registered; score_key is absent ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ unwrap_or(0) ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ early return
         assert_eq!(client.decay_score(&9999u64), 0);
+    }
 
     }
     #[test]
@@ -4809,17 +4813,18 @@ mod tests {
             client.get_maintenance_history_page(&asset_id, &4, &2).len(),
             1
         );
-        // Out-of-bounds offset ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ empty
+        // Out-of-bounds offset -> IndexOutOfBounds error
         assert_eq!(
-            client
-                .get_maintenance_history_page(&asset_id, &10, &2)
-                .len(),
-            0
+            client.try_get_maintenance_history_page(&asset_id, &10, &2),
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::IndexOutOfBounds as u32,
+            )))
         );
-        // limit=0 ÃƒÂ¢Ã¢â‚¬Â Ã¢â‚¬â„¢ empty
+        // limit=0 -> empty
         assert_eq!(
             client.get_maintenance_history_page(&asset_id, &0, &0).len(),
             0
+        );
         );
     }
 
@@ -4848,6 +4853,21 @@ mod tests {
         // offset >> len (10) -> empty vec
         let result = client.get_maintenance_history_page(&asset_id, &10, &2);
         assert_eq!(result.len(), 0);
+    }
+
+    #[test]
+    fn test_get_maintenance_history_page_nonexistent_asset_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let result = client.try_get_maintenance_history_page(&999u64, &0, &10);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::AssetNotFound as u32,
+            ))),
+        );
     }
 
     #[test]
