@@ -236,8 +236,6 @@ impl EngineerRegistry {
         );
     }
 
-    pub fn renew_credential(env: Env, engineer: Address, new_validity_period: u64) {
-        assert!(new_validity_period > 0, "new_validity_period must be greater than zero");
     /// Renew an engineer's credential by extending the expiry.
     /// Only the original issuer can renew credentials.
     ///
@@ -256,17 +254,6 @@ impl EngineerRegistry {
             .get(&engineer_key(&engineer))
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::EngineerNotFound));
         record.issuer.require_auth();
-        let now = env.ledger().timestamp();
-        let base = if record.expires_at > now { record.expires_at } else { now };
-        record.expires_at = base + new_validity_period;
-        env.storage()
-            .persistent()
-            .set(&engineer_key(&engineer), &record);
-        env.storage()
-            .persistent()
-            .extend_ttl(&engineer_key(&engineer), 518400, 518400);
-    }
-
         if !env.storage().instance().has(&trusted_key(&record.issuer)) {
             panic_with_error!(&env, ContractError::IssuerRemoved);
         }
@@ -433,11 +420,7 @@ impl EngineerRegistry {
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &true);
         env.storage().instance().extend_ttl(518400, 518400);
-<<<<<<< fix/ci-compile-errors-instance-extend-ttl
-=======
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.events().publish((symbol_short!("PAUSED"),), (admin,));
->>>>>>> main
     }
 
     /// Admin-only function to unpause the contract.
@@ -454,11 +437,7 @@ impl EngineerRegistry {
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &false);
         env.storage().instance().extend_ttl(518400, 518400);
-<<<<<<< fix/ci-compile-errors-instance-extend-ttl
-=======
-        env.storage().instance().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.events().publish((symbol_short!("UNPAUSED"),), (admin,));
->>>>>>> main
     }
 
     /// Check if the contract is currently paused.
@@ -521,16 +500,12 @@ impl EngineerRegistry {
         if !list.contains(issuer.clone()) {
             list.push_back(issuer.clone());
             env.storage().instance().set(&issuer_list_key(), &list);
+            env.storage().instance().extend_ttl(518400, 518400);
             env.events()
                 .publish((symbol_short!("ISS_ADD"), admin), (issuer,));
         } else {
-            env.storage().instance().set(&issuer_list_key(), &list);
+            env.storage().instance().extend_ttl(518400, 518400);
         }
-        env.storage().instance().set(&issuer_list_key(), &list);
-        env.storage().instance().extend_ttl(518400, 518400);
-
-        env.events()
-            .publish((symbol_short!("ISS_ADD"), admin), (issuer,));
     }
 
     /// Admin-only function to remove a trusted issuer.
@@ -1409,11 +1384,31 @@ mod tests {
     #[test]
     #[should_panic(expected = "new_validity_period must be greater than zero")]
     fn test_renew_credential_zero_validity_period_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+        let engineer = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.add_trusted_issuer(&admin, &issuer);
+        client.register_engineer(&engineer, &hash, &issuer, &31_536_000);
+        client.renew_credential(&engineer, &0);
+    }
+
     // --- Issue #369: register_engineer rejects validity_period = 0 ---
 
     #[test]
     #[should_panic(expected = "validity_period must be greater than zero")]
     fn test_register_engineer_zero_validity_period_rejected() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+        let engineer = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.add_trusted_issuer(&admin, &issuer);
+        client.register_engineer(&engineer, &hash, &issuer, &0);
+    }
     #[test]
     fn test_add_trusted_issuer_emits_event() {
         let env = Env::default();
@@ -1464,6 +1459,39 @@ mod tests {
         assert_eq!(iss_add_count, 1, "ISS_ADD should only be emitted once");
     }
 
+    // --- Issue #386: add_trusted_issuer and remove_trusted_issuer extend instance TTL ---
+
+    #[test]
+    fn test_add_trusted_issuer_extends_instance_ttl() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+
+        let issuer = Address::generate(&env);
+        client.add_trusted_issuer(&admin, &issuer);
+
+        let ttl = env.as_contract(&client.address, || {
+            env.storage().instance().get_ttl()
+        });
+        assert!(ttl > 0, "instance TTL must be extended after add_trusted_issuer");
+    }
+
+    #[test]
+    fn test_remove_trusted_issuer_extends_instance_ttl() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+
+        let issuer = Address::generate(&env);
+        client.add_trusted_issuer(&admin, &issuer);
+        client.remove_trusted_issuer(&admin, &issuer);
+
+        let ttl = env.as_contract(&client.address, || {
+            env.storage().instance().get_ttl()
+        });
+        assert!(ttl > 0, "instance TTL must be extended after remove_trusted_issuer");
+    }
+
     #[test]
     fn test_pause_affects_all_state_changes() {
         let env = Env::default();
@@ -1475,10 +1503,6 @@ mod tests {
         let hash = BytesN::from_array(&env, &[1u8; 32]);
 
         client.add_trusted_issuer(&admin, &issuer);
-        client.register_engineer(&engineer, &hash, &issuer, &1000);
-        client.renew_credential(&engineer, &0);
-    }
-
         client.register_engineer(&engineer, &hash, &issuer, &31_536_000);
 
         client.pause(&admin);
@@ -1563,6 +1587,13 @@ mod tests {
 
     #[test]
     fn test_renew_credential_from_now_when_expired() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+        let engineer = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+        client.add_trusted_issuer(&admin, &issuer);
         client.register_engineer(&engineer, &hash, &issuer, &86_400);
 
         // Advance past original expiry
@@ -2227,7 +2258,6 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
 
     #[test]
     fn test_propose_admin_emits_event() {
-    fn test_pause_state_persists_across_instance_ttl_boundary() {
         let env = Env::default();
         env.mock_all_auths();
         let (client, admin) = setup(&env);
@@ -2246,6 +2276,14 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
             data.try_into_val(&env).unwrap();
         assert_eq!(emitted_admin, admin);
         assert_eq!(emitted_new_admin, new_admin);
+    }
+
+    #[test]
+    fn test_pause_state_persists_across_instance_ttl_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (client, admin) = setup(&env);
+
         let issuer = Address::generate(&env);
         client.add_trusted_issuer(&admin, &issuer);
 
