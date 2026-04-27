@@ -1165,7 +1165,13 @@ impl Lifecycle {
     ///
     /// # Returns
     /// Vec of ScoreEntry containing the complete score trend
+    ///
+    /// # Panics
+    /// - [`ContractError::NotInitialized`] if contract has not been initialized
+    /// - [`ContractError::AssetNotFound`] if the asset does not exist
     pub fn get_score_history(env: Env, asset_id: u64) -> Vec<ScoreEntry> {
+        let asset_registry = get_asset_registry_addr(&env);
+        verify_asset_exists(&env, &asset_registry, &asset_id);
         env.storage()
             .persistent()
             .get(&score_history_key(asset_id))
@@ -4291,6 +4297,21 @@ mod tests {
             &engineer,
         );
         assert_eq!(client.get_last_service_timestamp(&asset_id), Some(t1));
+    }
+
+    #[test]
+    fn test_get_score_history_nonexistent_asset_returns_error() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, _, _, _) = setup(&env, 0);
+        let result = client.try_get_score_history(&999u64);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                asset_registry::ContractError::AssetNotFound as u32,
+            ))),
+        );
     }
 
     // --- Issue #142: NotInitialized structured error ---
