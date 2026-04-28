@@ -799,6 +799,33 @@ impl AssetRegistry {
             .get(&asset_type_key(&asset_type))
             .unwrap_or(false)
     }
+
+    /// Get the lifecycle score for an asset by cross-calling the Lifecycle contract.
+    ///
+    /// # Arguments
+    /// * `asset_id` - The unique identifier of the asset
+    /// * `lifecycle_contract` - The address of the Lifecycle contract
+    ///
+    /// # Returns
+    /// The collateral score (u32) for the asset
+    ///
+    /// # Panics
+    /// - [`ContractError::AssetNotFound`] if the asset does not exist
+    pub fn get_lifecycle_score(env: Env, asset_id: u64, lifecycle_contract: Address) -> u32 {
+        // Verify asset exists in this registry
+        if !Self::asset_exists(env.clone(), asset_id) {
+            panic_with_error!(&env, ContractError::AssetNotFound);
+        }
+
+        // Cross-call the Lifecycle contract to get the collateral score
+        // Using invoke_contract to avoid circular dependency
+        let score: u32 = env.invoke_contract(
+            &lifecycle_contract,
+            &symbol_short!("get_collateral_score"),
+            (&asset_id,),
+        );
+        score
+    }
 }
 
 #[cfg(test)]
@@ -812,6 +839,7 @@ mod tests {
     };
 
     use crate::AssetRegistryClient;
+    use lifecycle;
 
     #[test]
     fn test_register_and_get_asset() {
@@ -2712,6 +2740,64 @@ mod tests {
         });
     }
 
+    #[test]
+    fn test_get_lifecycle_score_cross_contract_call() {
+        let env = Env::default();
+        env.mock_all_auths();
+        
+        let asset_registry_id = env.register(AssetRegistry, ());
+        let lifecycle_id = env.register(lifecycle::Lifecycle, ());
+        
+        let asset_client = AssetRegistryClient::new(&env, &asset_registry_id);
+        let lifecycle_client = lifecycle::LifecycleClient::new(&env, &lifecycle_id);
+        
+        let admin = Address::generate(&env);
+        let asset_owner = Address::generate(&env);
+        
+        // Initialize both contracts
+        asset_client.initialize_admin(&admin);
+        asset_client.add_asset_type(&admin, &symbol_short!("GENSET"));
+        
+        let lifecycle_admin = Address::generate(&env);
+        lifecycle_client.initialize(
+            &asset_registry_id,
+            &Address::generate(&env),
+            &lifecycle_admin,
+            &100,
+        );
+        
+        // Register an asset
+        let asset_id = asset_client.register_asset(
+            &symbol_short!("GENSET"),
+            &String::from_str(&env, "Test Asset"),
+            &asset_owner,
+        );
+        
+        // Get lifecycle score via cross-contract call
+        let score = asset_client.get_lifecycle_score(&asset_id, &lifecycle_id);
+        
+        // Score should be a valid u32 (initially 0 for new asset)
+        assert_eq!(score, 0);
+    }
+
+    #[test]
+    fn test_get_lifecycle_score_nonexistent_asset() {
+        let env = Env::default();
+        env.mock_all_auths();
+        
+        let asset_registry_id = env.register(AssetRegistry, ());
+        let lifecycle_id = env.register(lifecycle::Lifecycle, ());
+        
+        let asset_client = AssetRegistryClient::new(&env, &asset_registry_id);
+        
+        let admin = Address::generate(&env);
+        asset_client.initialize_admin(&admin);
+        
+        // Try to get lifecycle score for non-existent asset
+        let result = asset_client.try_get_lifecycle_score(&999, &lifecycle_id);
+        
+        // Should return error for non-existent asset
+        assert!(result.is_err());
     // --- Issue #384: initialize_admin extends instance TTL after writing ADMIN_KEY ---
 
     #[test]

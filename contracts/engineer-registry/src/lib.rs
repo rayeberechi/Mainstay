@@ -1768,7 +1768,7 @@ assert_eq!(renewed.expires_at, original.expires_at + 86_400);
         ) = data.try_into_val(&env).unwrap();
         assert_eq!(emitted_issuer, issuer);
         assert_eq!(old_expires_at, previous_expires_at);
-assert_eq!(new_expires_at, previous_expires_at + 86_400);
+        assert_eq!(new_expires_at, previous_expires_at + 86_400);
         assert_eq!(emitted_renewed_at, renewed_at);
     }
 
