@@ -486,8 +486,6 @@ impl AssetRegistry {
         }
         env.storage().persistent().set(&PAUSED_KEY, &true);
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
-        env.storage().instance().set(&PAUSED_KEY, &true);
-        env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("PAUSED"),), (admin,));
     }
 
@@ -503,8 +501,6 @@ impl AssetRegistry {
         }
         env.storage().persistent().set(&PAUSED_KEY, &false);
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
-        env.storage().instance().set(&PAUSED_KEY, &false);
-        env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("UNPAUSED"),), (admin,));
     }
 
