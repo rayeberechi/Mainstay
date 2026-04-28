@@ -64,7 +64,6 @@ pub struct Config {
 const ASSET_REGISTRY: Symbol = symbol_short!("REGISTRY");
 const ENG_REGISTRY: Symbol = symbol_short!("ENG_REG");
 const CONFIG: Symbol = symbol_short!("CONFIG");
-const ELIG_THRESHOLD: Symbol = symbol_short!("ELIG_THR");
 const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const PENDING_ADMIN_KEY: Symbol = symbol_short!("PADMIN");
 const DEFAULT_MAX_HISTORY: u32 = 200;
