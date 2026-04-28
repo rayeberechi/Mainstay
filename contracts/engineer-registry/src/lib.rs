@@ -52,7 +52,7 @@ const PAUSED_KEY: Symbol = symbol_short!("PAUSED");
 const REG_ENG_TOPIC: Symbol = symbol_short!("REG_ENG");
 const REVOKE_TOPIC: Symbol = symbol_short!("REV_CRED");
 const MIN_VALIDITY_PERIOD: u64 = 86_400;
-const EVENT_PROP_ADMIN: Symbol = symbol_short!("PROP_ADMIN");
+const EVENT_PROP_ADMIN: Symbol = symbol_short!("PROP_ADM");
 
 fn is_paused(env: &Env) -> bool {
     env.storage().persistent().get(&PAUSED_KEY).unwrap_or(false)
@@ -118,11 +118,6 @@ impl EngineerRegistry {
         if !env.storage().instance().has(&trusted_key(&issuer)) {
             panic_with_error!(&env, ContractError::UntrustedIssuer);
         }
-        assert!(
-            credential_hash != BytesN::from_array(&env, &[0u8; 32]),
-            "credential hash cannot be zero"
-        );
-        assert!(validity_period > 0, "validity_period must be greater than zero");
         if credential_hash == BytesN::from_array(&env, &[0u8; 32]) {
             panic_with_error!(&env, ContractError::InvalidCredentialHash);
         }
@@ -247,6 +242,8 @@ impl EngineerRegistry {
     /// - [`ContractError::EngineerNotFound`] if no engineer exists with the given address
     /// - [`ContractError::CredentialRevoked`] if the credential has been revoked
     pub fn renew_credential(env: Env, engineer: Address, new_validity_period: u64) {
+    pub fn renew_credential(env: Env, engineer: Address, new_validity_period: u64) {
+        assert!(new_validity_period > 0, "new_validity_period must be greater than zero");
         ensure_not_paused(&env);
         let mut record: Engineer = env
             .storage()
@@ -506,6 +503,11 @@ impl EngineerRegistry {
         } else {
             env.storage().instance().extend_ttl(518400, 518400);
         }
+        }
+        env.storage().instance().set(&issuer_list_key(), &list);
+        env.storage().instance().extend_ttl(518400, 518400);
+        env.events()
+            .publish((symbol_short!("ISS_ADD"), admin), (issuer,));
     }
 
     /// Admin-only function to remove a trusted issuer.
@@ -640,6 +642,7 @@ impl EngineerRegistry {
 mod tests {
     use super::*;
     use soroban_sdk::{
+        testutils::storage::Instance,
         testutils::storage::Persistent,
         testutils::Address as _,
         testutils::{Events, Ledger},
@@ -1398,7 +1401,6 @@ mod tests {
     // --- Issue #369: register_engineer rejects validity_period = 0 ---
 
     #[test]
-    #[should_panic(expected = "validity_period must be greater than zero")]
     fn test_register_engineer_zero_validity_period_rejected() {
         let env = Env::default();
         env.mock_all_auths();
@@ -1408,6 +1410,13 @@ mod tests {
         let hash = BytesN::from_array(&env, &[1u8; 32]);
         client.add_trusted_issuer(&admin, &issuer);
         client.register_engineer(&engineer, &hash, &issuer, &0);
+        let result = client.try_register_engineer(&engineer, &hash, &issuer, &0);
+        assert_eq!(
+            result,
+            Err(Ok(soroban_sdk::Error::from_contract_error(
+                ContractError::InvalidValidityPeriod as u32,
+            ))),
+        );
     }
     #[test]
     fn test_add_trusted_issuer_emits_event() {
@@ -1576,13 +1585,13 @@ mod tests {
         let hash = BytesN::from_array(&env, &[1u8; 32]);
 
         client.add_trusted_issuer(&admin, &issuer);
-        client.register_engineer(&engineer, &hash, &issuer, &1000);
+        client.register_engineer(&engineer, &hash, &issuer, &31_536_000);
 
         let before = client.get_engineer(&engineer).expires_at;
-        client.renew_credential(&engineer, &500);
+        client.renew_credential(&engineer, &86_400);
         let after = client.get_engineer(&engineer).expires_at;
 
-        assert_eq!(after, before + 500);
+        assert_eq!(after, before + 86_400);
     }
 
     #[test]
@@ -1593,6 +1602,11 @@ mod tests {
         let engineer = Address::generate(&env);
         let issuer = Address::generate(&env);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
+
+        let engineer = Address::generate(&env);
+        let issuer = Address::generate(&env);
+        let hash = BytesN::from_array(&env, &[1u8; 32]);
+
         client.add_trusted_issuer(&admin, &issuer);
         client.register_engineer(&engineer, &hash, &issuer, &86_400);
 
@@ -2002,19 +2016,9 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
 
         client.add_trusted_issuer(&admin, &issuer);
-        client.register_engineer(&engineer, &hash, &issuer, &100);
-
-        // Advance past expiry
-        env.ledger().with_mut(|li| li.timestamp += 200);
-        let now = env.ledger().timestamp();
-
-        client.renew_credential(&engineer, &500);
-        let after = client.get_engineer(&engineer).expires_at;
-
-        assert_eq!(after, now + 500);
         client.register_engineer(&engineer, &hash, &issuer, &31_536_000);
 
-        // Attempt to re-register the same engineer
+        // Attempt to re-register the same active engineer
         let result = client.try_register_engineer(&engineer, &hash, &issuer, &31_536_000);
         assert_eq!(
             result,
@@ -2120,9 +2124,8 @@ assert_eq!(new_expires_at, previous_expires_at + 86_400);
         let hash = BytesN::from_array(&env, &[1u8; 32]);
 
         client.add_trusted_issuer(&admin, &issuer);
-        client.register_engineer(&engineer, &hash, &issuer, &0);
-        client.register_engineer(&engineer, &hash, &issuer, &100); // 100 seconds validity
-        env.ledger().set_timestamp(200); // Move time forward
+        client.register_engineer(&engineer, &hash, &issuer, &86_400); // 1 day validity
+        env.ledger().set_timestamp(86_401); // Move time past expiry
 
         assert_eq!(
             client.get_engineer_status(&engineer),

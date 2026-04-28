@@ -408,6 +408,7 @@ impl AssetRegistry {
             panic_with_error!(&env, ContractError::AdminAlreadyInitialized);
         }
         env.storage().instance().set(&ADMIN_KEY, &admin);
+        env.storage().instance().extend_ttl(518400, 518400);
     }
 
     /// Get the current admin address of the contract.
@@ -487,10 +488,7 @@ impl AssetRegistry {
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &true);
         env.storage().instance().extend_ttl(518400, 518400);
-<<<<<<< fix/ci-compile-errors-instance-extend-ttl
-=======
         env.events().publish((symbol_short!("PAUSED"),), (admin,));
->>>>>>> main
     }
 
     /// Admin-only function to unpause the contract.
@@ -507,10 +505,7 @@ impl AssetRegistry {
         env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &false);
         env.storage().instance().extend_ttl(518400, 518400);
-<<<<<<< fix/ci-compile-errors-instance-extend-ttl
-=======
         env.events().publish((symbol_short!("UNPAUSED"),), (admin,));
->>>>>>> main
     }
 
     /// Check if the contract is currently paused.
@@ -2715,5 +2710,34 @@ mod tests {
                 .get_ttl(&owner_index_key(&owner));
             assert!(ttl > 0, "owner index TTL must be extended on read");
         });
+    }
+
+    // --- Issue #384: initialize_admin extends instance TTL after writing ADMIN_KEY ---
+
+    #[test]
+    fn test_admin_key_survives_ttl_boundary() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register(AssetRegistry, ());
+        let client = AssetRegistryClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.initialize_admin(&admin);
+
+        // Verify instance TTL was extended after writing ADMIN_KEY
+        env.as_contract(&contract_id, || {
+            let ttl = env.storage().instance().get_ttl();
+            assert!(ttl > 0, "instance TTL must be extended after initialize_admin");
+        });
+
+        // Simulate TTL boundary: advance ledger sequence past the minimum TTL
+        // then verify get_admin still returns the correct admin
+        env.ledger().with_mut(|li| {
+            li.sequence_number += 518400;
+            li.timestamp += 518400 * 5;
+        });
+
+        // get_admin must still resolve correctly (TTL was extended at init time)
+        assert_eq!(client.get_admin(), admin);
     }
 }
