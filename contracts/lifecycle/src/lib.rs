@@ -255,6 +255,12 @@ fn apply_decay(
     // Calculate decay using configured rate and interval
     let decay_intervals = time_elapsed / config.decay_interval;
     if decay_intervals == 0 && !update_on_zero_interval {
+        env.storage()
+            .persistent()
+            .extend_ttl(&score_key(asset_id), 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&last_update_key(asset_id), 518400, 518400);
         return current_score;
     }
 
@@ -2700,6 +2706,50 @@ mod tests {
                 .get_ttl(&last_update_key(asset_id))
         });
         assert!(ttl > 0, "last_update_key TTL should be extended even when score is 0");
+    }
+
+    #[test]
+    fn test_apply_decay_extends_ttl_on_zero_interval_early_return() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, _) = setup(&env, 0);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        // Build a non-zero score
+        client.submit_maintenance(
+            &asset_id,
+            &symbol_short!("OIL_CHG"),
+            &String::from_str(&env, ""),
+            &engineer,
+        );
+        let initial_score = client.get_collateral_score(&asset_id);
+        assert!(initial_score > 0);
+
+        let contract_id = client.address.clone();
+
+        // Verify keys exist before decay_score
+        env.as_contract(&contract_id, || {
+            assert!(env.storage().persistent().has(&score_key(asset_id)));
+            assert!(env.storage().persistent().has(&last_update_key(asset_id)));
+        });
+
+        // Call decay_score with no time elapsed (zero intervals) -> early return path
+        let score_after = client.decay_score(&asset_id);
+        assert_eq!(score_after, initial_score);
+
+        // Verify TTLs were extended even on the early-return path
+        env.as_contract(&contract_id, || {
+            assert!(
+                env.storage().persistent().get_ttl(&score_key(asset_id)) > 0,
+                "score_key TTL should be extended on zero-interval early return"
+            );
+            assert!(
+                env.storage().persistent().get_ttl(&last_update_key(asset_id)) > 0,
+                "last_update_key TTL should be extended on zero-interval early return"
+            );
+        });
     }
 
     #[test]
