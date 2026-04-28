@@ -242,8 +242,6 @@ impl EngineerRegistry {
     /// - [`ContractError::EngineerNotFound`] if no engineer exists with the given address
     /// - [`ContractError::CredentialRevoked`] if the credential has been revoked
     pub fn renew_credential(env: Env, engineer: Address, new_validity_period: u64) {
-    pub fn renew_credential(env: Env, engineer: Address, new_validity_period: u64) {
-        assert!(new_validity_period > 0, "new_validity_period must be greater than zero");
         ensure_not_paused(&env);
         let mut record: Engineer = env
             .storage()
