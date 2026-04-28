@@ -503,11 +503,6 @@ impl EngineerRegistry {
         } else {
             env.storage().instance().extend_ttl(518400, 518400);
         }
-        }
-        env.storage().instance().set(&issuer_list_key(), &list);
-        env.storage().instance().extend_ttl(518400, 518400);
-        env.events()
-            .publish((symbol_short!("ISS_ADD"), admin), (issuer,));
     }
 
     /// Admin-only function to remove a trusted issuer.
