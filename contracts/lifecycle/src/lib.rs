@@ -2670,7 +2670,6 @@ mod tests {
         assert_eq!(client.decay_score(&9999u64), 0);
     }
 
-    }
     #[test]
     fn test_apply_decay_extends_last_update_ttl_when_score_is_zero() {
         let env = Env::default();
