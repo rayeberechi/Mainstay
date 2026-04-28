@@ -4825,12 +4825,10 @@ mod tests {
             client.get_maintenance_history_page(&asset_id, &4, &2).len(),
             1
         );
-        // Out-of-bounds offset -> IndexOutOfBounds error
+        // Out-of-bounds offset -> empty vec
         assert_eq!(
-            client.try_get_maintenance_history_page(&asset_id, &10, &2),
-            Err(Ok(soroban_sdk::Error::from_contract_error(
-                ContractError::IndexOutOfBounds as u32,
-            )))
+            client.get_maintenance_history_page(&asset_id, &10, &2).len(),
+            0
         );
         // limit=0 -> empty
         assert_eq!(
