@@ -148,7 +148,6 @@ fn engineer_history_add(env: &Env, engineer: &Address, asset_id: u64, max_histor
     env.storage().persistent().extend_ttl(&key, 518400, 518400);
 }
 
-
 fn get_asset_registry_addr(env: &Env) -> Address {
     env.storage()
         .persistent()
@@ -165,16 +164,24 @@ fn get_engineer_registry_addr(env: &Env) -> Address {
 
 fn set_asset_registry_addr(env: &Env, addr: &Address) {
     env.storage().persistent().set(&ASSET_REGISTRY, addr);
-    env.storage().persistent().extend_ttl(&ASSET_REGISTRY, 518400, 518400);
+    env.storage()
+        .persistent()
+        .extend_ttl(&ASSET_REGISTRY, 518400, 518400);
 }
 
 fn set_engineer_registry_addr(env: &Env, addr: &Address) {
     env.storage().persistent().set(&ENG_REGISTRY, addr);
-    env.storage().persistent().extend_ttl(&ENG_REGISTRY, 518400, 518400);
+    env.storage()
+        .persistent()
+        .extend_ttl(&ENG_REGISTRY, 518400, 518400);
 }
 
 fn is_zero_address(env: &Env, addr: &Address) -> bool {
-    *addr == Address::from_str(env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4")
+    *addr
+        == Address::from_str(
+            env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        )
 }
 
 fn is_paused(env: &Env) -> bool {
@@ -398,7 +405,9 @@ impl Lifecycle {
             max_notes_length: DEFAULT_MAX_NOTES_LENGTH,
         };
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
 
         env.events()
             .publish((EVENT_INIT,), (asset_registry, engineer_registry, admin));
@@ -423,7 +432,9 @@ impl Lifecycle {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
         env.storage().persistent().set(&PAUSED_KEY, &true);
-        env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &true);
         env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("PAUSED"),), (admin,));
@@ -448,7 +459,9 @@ impl Lifecycle {
             panic_with_error!(&env, ContractError::UnauthorizedAdmin);
         }
         env.storage().persistent().set(&PAUSED_KEY, &false);
-        env.storage().persistent().extend_ttl(&PAUSED_KEY, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&PAUSED_KEY, 518400, 518400);
         env.storage().instance().set(&PAUSED_KEY, &false);
         env.storage().instance().extend_ttl(518400, 518400);
         env.events().publish((symbol_short!("UNPAUSED"),), (admin,));
@@ -512,10 +525,11 @@ impl Lifecycle {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
         config.admin = pending_admin.clone();
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
         env.storage().instance().remove(&PENDING_ADMIN_KEY);
-        env.events()
-            .publish((EVENT_ADMIN_SET,), (pending_admin,));
+        env.events().publish((EVENT_ADMIN_SET,), (pending_admin,));
     }
 
     /// Admin-only function to update the score increment configuration.
@@ -549,9 +563,13 @@ impl Lifecycle {
         let old_increment = config.score_increment;
         config.score_increment = score_increment;
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
-        env.events()
-            .publish((symbol_short!("CFG_UPD"),), (old_increment, score_increment));
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
+        env.events().publish(
+            (symbol_short!("CFG_UPD"),),
+            (old_increment, score_increment),
+        );
     }
 
     /// Admin-only function to update the decay rate and interval for collateral score decay.
@@ -590,10 +608,17 @@ impl Lifecycle {
 
         env.events().publish(
             (symbol_short!("CFG_UPD"),),
-            (old_decay_rate, decay_rate, old_decay_interval, decay_interval),
+            (
+                old_decay_rate,
+                decay_rate,
+                old_decay_interval,
+                decay_interval,
+            ),
         );
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
     }
 
     /// Admin-only function to update the eligibility threshold for collateral scoring.
@@ -625,11 +650,11 @@ impl Lifecycle {
         let old_threshold = config.eligibility_threshold;
         config.eligibility_threshold = threshold;
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
-        env.events().publish(
-            (symbol_short!("CFG_UPD"),),
-            (old_threshold, threshold),
-        );
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
+        env.events()
+            .publish((symbol_short!("CFG_UPD"),), (old_threshold, threshold));
     }
 
     /// Admin-only function to update the maximum history records per asset.
@@ -668,7 +693,9 @@ impl Lifecycle {
 
         config.max_history = new_max;
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
 
         env.events()
             .publish((symbol_short!("UPD_MAX"), admin), new_max);
@@ -703,7 +730,9 @@ impl Lifecycle {
 
         config.max_notes_length = new_max;
         env.storage().persistent().set(&CONFIG, &config);
-        env.storage().persistent().extend_ttl(&CONFIG, 518400, 518400);
+        env.storage()
+            .persistent()
+            .extend_ttl(&CONFIG, 518400, 518400);
 
         env.events()
             .publish((symbol_short!("UPD_NOTES"), admin), new_max);
@@ -745,7 +774,7 @@ impl Lifecycle {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
 
         // Validate task type early before cross-contract calls
-        let weight = get_task_weight(&env, &task_type);
+        let _weight = get_task_weight(&env, &task_type);
         validate_notes_length(&env, &notes, config.max_notes_length);
 
         // Check history cap before cross-contract calls to avoid wasting gas
@@ -846,12 +875,7 @@ impl Lifecycle {
     /// # Panics
     /// - [`ContractError::NotInitialized`] if contract has not been initialized
     /// - [`ContractError::AssetNotFound`] if the asset does not exist
-    pub fn record_transfer(
-        env: Env,
-        asset_id: u64,
-        previous_owner: Address,
-        new_owner: Address,
-    ) {
+    pub fn record_transfer(env: Env, asset_id: u64, previous_owner: Address, new_owner: Address) {
         ensure_not_paused(&env);
         new_owner.require_auth();
 
@@ -890,8 +914,10 @@ impl Lifecycle {
             .persistent()
             .extend_ttl(&history_key(asset_id), 518400, 518400);
 
-        env.events()
-            .publish((EVENT_XFER, asset_id), (previous_owner, new_owner, timestamp));
+        env.events().publish(
+            (EVENT_XFER, asset_id),
+            (previous_owner, new_owner, timestamp),
+        );
     }
 
     /// Submit multiple maintenance records for the same asset in a single transaction.
@@ -923,13 +949,10 @@ impl Lifecycle {
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
 
         // Validate records early before cross-contract calls
-        for (i, record) in records.iter().enumerate() {
+        for record in records.iter() {
             validate_notes_length(&env, &record.notes, config.max_notes_length);
             // Validate task type is known
             let _ = get_task_weight(&env, &record.task_type);
-            // Log index for debugging
-            env.events()
-                .publish((symbol_short!("VAL_IDX"), i as u32), ());
         }
 
         // Validate asset exists
@@ -977,6 +1000,10 @@ impl Lifecycle {
                 asset_id,
                 ScoreEntry { timestamp, score },
                 config.max_history,
+            );
+            env.events().publish(
+                (EVENT_MAINT, asset_id),
+                (record.task_type.clone(), engineer.clone(), timestamp),
             );
         }
 
@@ -1107,10 +1134,8 @@ impl Lifecycle {
     /// # Returns
     /// `Some(MaintenanceRecord)` with the highest timestamp, or `None` if no history exists
     pub fn get_last_service(env: Env, asset_id: u64) -> Option<MaintenanceRecord> {
-        let history: Vec<MaintenanceRecord> = env
-            .storage()
-            .persistent()
-            .get(&history_key(asset_id))?;
+        let history: Vec<MaintenanceRecord> =
+            env.storage().persistent().get(&history_key(asset_id))?;
 
         let mut best: Option<MaintenanceRecord> = None;
         for i in 0..history.len() {
@@ -1275,12 +1300,12 @@ impl Lifecycle {
             .persistent()
             .get(&engineer_history_key(&engineer))
             .unwrap_or_else(|| Vec::new(&env));
-        
+
         let len = history.len();
         if len <= 100 {
             return history;
         }
-        
+
         let mut result = Vec::new(&env);
         for i in 0..100u32 {
             result.push_back(history.get(i).unwrap());
@@ -1485,11 +1510,15 @@ impl Lifecycle {
         score_history_push(
             &env,
             asset_id,
-            ScoreEntry { timestamp: now, score: 0 },
+            ScoreEntry {
+                timestamp: now,
+                score: 0,
+            },
             config.max_history,
         );
 
-        env.events().publish((EVENT_RST_SCR, asset_id), (admin, now));
+        env.events()
+            .publish((EVENT_RST_SCR, asset_id), (admin, now));
     }
 
     /// Check collateral eligibility for multiple assets in a single call.
@@ -1987,7 +2016,11 @@ mod tests {
 
         // Engineer history should be capped at max_history (3)
         let history = client.get_engineer_maintenance_history(&engineer);
-        assert_eq!(history.len(), 3, "Engineer history should be bounded by max_history");
+        assert_eq!(
+            history.len(),
+            3,
+            "Engineer history should be bounded by max_history"
+        );
 
         // Oldest entries (asset_ids[0], asset_ids[1]) should have been evicted
         assert!(!history.contains(&asset_ids.get(0).unwrap()));
@@ -1999,7 +2032,6 @@ mod tests {
         assert!(history.contains(&asset_ids.get(4).unwrap()));
     }
 
-
     #[test]
     fn test_engineer_history_no_duplicate_asset_id_on_repeated_maintenance() {
         let env = Env::default();
@@ -2009,8 +2041,18 @@ mod tests {
         let asset_id = register_asset(&env, &asset_registry_client);
         let engineer = register_engineer(&env, &engineer_registry_client);
 
-        client.submit_maintenance(&asset_id, &symbol_short!("OIL_CHG"), &String::from_str(&env, "first"), &engineer);
-        client.submit_maintenance(&asset_id, &symbol_short!("INSPECT"), &String::from_str(&env, "second"), &engineer);
+        client.submit_maintenance(
+            &asset_id,
+            &symbol_short!("OIL_CHG"),
+            &String::from_str(&env, "first"),
+            &engineer,
+        );
+        client.submit_maintenance(
+            &asset_id,
+            &symbol_short!("INSPECT"),
+            &String::from_str(&env, "second"),
+            &engineer,
+        );
 
         let history = client.get_engineer_maintenance_history(&engineer);
         assert_eq!(history.len(), 1);
@@ -2597,7 +2639,10 @@ mod tests {
                 .persistent()
                 .get(&score_key(asset_id))
                 .unwrap_or(0);
-            assert_eq!(stored, 20, "stored score must not be mutated by get_collateral_score");
+            assert_eq!(
+                stored, 20,
+                "stored score must not be mutated by get_collateral_score"
+            );
         });
     }
 
@@ -2715,7 +2760,10 @@ mod tests {
                 .persistent()
                 .get_ttl(&last_update_key(asset_id))
         });
-        assert!(ttl > 0, "last_update_key TTL should be extended even when score is 0");
+        assert!(
+            ttl > 0,
+            "last_update_key TTL should be extended even when score is 0"
+        );
     }
 
     #[test]
@@ -2756,7 +2804,10 @@ mod tests {
                 "score_key TTL should be extended on zero-interval early return"
             );
             assert!(
-                env.storage().persistent().get_ttl(&last_update_key(asset_id)) > 0,
+                env.storage()
+                    .persistent()
+                    .get_ttl(&last_update_key(asset_id))
+                    > 0,
                 "last_update_key TTL should be extended on zero-interval early return"
             );
         });
@@ -2871,7 +2922,7 @@ mod tests {
         assert_eq!(
             result,
             Err(Ok(soroban_sdk::Error::from_contract_error(
-                asset_registry::ContractError::AssetNotFound as u32,
+                ContractError::AssetNotFound as u32,
             ))),
         );
     }
@@ -3111,10 +3162,16 @@ mod tests {
         // Capture the raw stored scores before time advance
         let contract_id = client.address.clone();
         let stored_a_before: u32 = env.as_contract(&contract_id, || {
-            env.storage().persistent().get(&score_key(asset_a)).unwrap_or(0)
+            env.storage()
+                .persistent()
+                .get(&score_key(asset_a))
+                .unwrap_or(0)
         });
         let stored_b_before: u32 = env.as_contract(&contract_id, || {
-            env.storage().persistent().get(&score_key(asset_b)).unwrap_or(0)
+            env.storage()
+                .persistent()
+                .get(&score_key(asset_b))
+                .unwrap_or(0)
         });
 
         // Advance time so decay would apply if storage were written
@@ -3127,13 +3184,25 @@ mod tests {
 
         // Raw stored scores must be unchanged — batch call must not write to storage
         let stored_a_after: u32 = env.as_contract(&contract_id, || {
-            env.storage().persistent().get(&score_key(asset_a)).unwrap_or(0)
+            env.storage()
+                .persistent()
+                .get(&score_key(asset_a))
+                .unwrap_or(0)
         });
         let stored_b_after: u32 = env.as_contract(&contract_id, || {
-            env.storage().persistent().get(&score_key(asset_b)).unwrap_or(0)
+            env.storage()
+                .persistent()
+                .get(&score_key(asset_b))
+                .unwrap_or(0)
         });
-        assert_eq!(stored_a_after, stored_a_before, "batch_is_collateral_eligible must not write decayed score to storage");
-        assert_eq!(stored_b_after, stored_b_before, "batch_is_collateral_eligible must not write decayed score to storage");
+        assert_eq!(
+            stored_a_after, stored_a_before,
+            "batch_is_collateral_eligible must not write decayed score to storage"
+        );
+        assert_eq!(
+            stored_b_after, stored_b_before,
+            "batch_is_collateral_eligible must not write decayed score to storage"
+        );
     }
 
     // --- Upgrade tests ---
@@ -3349,7 +3418,7 @@ mod tests {
         );
 
         let history = client.get_score_history(&asset_id);
-        assert_eq!(history.get(0).unwrap().score, 5);  // 0 + 5
+        assert_eq!(history.get(0).unwrap().score, 5); // 0 + 5
         assert_eq!(history.get(1).unwrap().score, 10); // 5 + 5
         assert_eq!(history.get(2).unwrap().score, 15); // 10 + 5
     }
@@ -3557,6 +3626,39 @@ mod tests {
         // 3 records at default score_increment (5) each => 15
         assert_eq!(client.get_collateral_score(&asset_id), 15);
         assert_eq!(client.get_maintenance_history(&asset_id).len(), 3);
+    }
+
+    #[test]
+    fn test_batch_submit_maintenance_emits_maint_events() {
+        let env = Env::default();
+        env.mock_all_auths();
+
+        let (client, asset_registry_client, engineer_registry_client, _) = setup(&env, 0);
+        let asset_id = register_asset(&env, &asset_registry_client);
+        let engineer = register_engineer(&env, &engineer_registry_client);
+
+        let mut records = Vec::new(&env);
+        records.push_back(BatchRecord {
+            task_type: symbol_short!("OIL_CHG"),
+            notes: String::from_str(&env, "Oil change"),
+        });
+        records.push_back(BatchRecord {
+            task_type: symbol_short!("INSPECT"),
+            notes: String::from_str(&env, "Inspection"),
+        });
+
+        client.batch_submit_maintenance(&asset_id, &records, &engineer);
+
+        let events = env.events().all();
+        let maint_count = events
+            .iter()
+            .filter(|(_, topics, _)| {
+                let t0: Result<Symbol, _> = topics.get(0).unwrap().try_into_val(&env);
+                t0.map(|s| s == EVENT_MAINT).unwrap_or(false)
+            })
+            .count();
+        // One MAINT event per record submitted
+        assert_eq!(maint_count, 2);
     }
 
     #[test]
@@ -4387,7 +4489,11 @@ mod tests {
 
         let (client, _, _, _) = setup(&env, 0);
         let result = client.get_score_history(&999u64);
-        assert_eq!(result.len(), 0, "nonexistent asset should return empty history");
+        assert_eq!(
+            result.len(),
+            0,
+            "nonexistent asset should return empty history"
+        );
     }
 
     #[test]
@@ -4479,12 +4585,7 @@ mod tests {
         let admin = Address::generate(&env);
 
         let lifecycle = LifecycleClient::new(&env, &lifecycle_id);
-        lifecycle.initialize(
-            &asset_registry_id,
-            &engineer_registry_id,
-            &admin,
-            &0u32,
-        );
+        lifecycle.initialize(&asset_registry_id, &engineer_registry_id, &admin, &0u32);
 
         // Verify registries are accessible normally
         assert_eq!(lifecycle.get_asset_registry(), asset_registry_id);
@@ -4674,7 +4775,10 @@ mod tests {
         env.mock_all_auths();
 
         let (client, _, _, admin) = setup(&env, 0);
-        let zero = Address::from_str(&env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4");
+        let zero = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
 
         let result = client.try_update_asset_registry(&admin, &zero);
         assert_eq!(
@@ -4691,7 +4795,10 @@ mod tests {
         env.mock_all_auths();
 
         let (client, _, _, admin) = setup(&env, 0);
-        let zero = Address::from_str(&env, "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4");
+        let zero = Address::from_str(
+            &env,
+            "CAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABSC4",
+        );
 
         let result = client.try_update_engineer_registry(&admin, &zero);
         assert_eq!(
@@ -4841,14 +4948,15 @@ mod tests {
         );
         // Out-of-bounds offset -> empty vec
         assert_eq!(
-            client.get_maintenance_history_page(&asset_id, &10, &2).len(),
+            client
+                .get_maintenance_history_page(&asset_id, &10, &2)
+                .len(),
             0
         );
         // limit=0 -> empty
         assert_eq!(
             client.get_maintenance_history_page(&asset_id, &0, &0).len(),
             0
-        );
         );
     }
 
@@ -5399,7 +5507,10 @@ mod tests {
         assert_eq!(asset_registry.get_asset(&asset_id).owner, new_owner);
         assert_eq!(lifecycle.get_collateral_score(&asset_id), 50);
         assert!(lifecycle.is_collateral_eligible(&asset_id));
-        assert_eq!(lifecycle.get_last_service(&asset_id).unwrap().engineer, engineer);
+        assert_eq!(
+            lifecycle.get_last_service(&asset_id).unwrap().engineer,
+            engineer
+        );
     }
 
     #[test]
